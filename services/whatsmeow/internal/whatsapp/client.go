@@ -1,0 +1,1026 @@
+package whatsapp
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/rs/zerolog"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	CommunitySyncStatusIdle    = "idle"
+	CommunitySyncStatusSyncing = "syncing"
+	CommunitySyncStatusReady   = "ready"
+
+	communityCacheTTL = 10 * time.Minute
+)
+
+type Client struct {
+	WAClient   *whatsmeow.Client
+	InstanceID string
+	Store      *sqlstore.Container
+	Logger     zerolog.Logger
+
+	// Community cache
+	communityMu     sync.RWMutex
+	communityCache  []CommunityListItem
+	communitySyncAt time.Time
+	communitySyncStatus string
+	OnCommunitySyncDone func() // called when background sync finishes
+}
+
+// InvalidateCommunityCache marks cache as stale so next read triggers a re-sync
+func (c *Client) InvalidateCommunityCache() {
+	c.communityMu.Lock()
+	c.communityCache = nil
+	c.communitySyncAt = time.Time{}
+	c.communitySyncStatus = CommunitySyncStatusIdle
+	c.communityMu.Unlock()
+	c.Logger.Debug().Msg("community cache invalidated")
+}
+
+// CommunitySyncStatus returns the current sync state
+func (c *Client) GetCommunitySyncStatus() string {
+	c.communityMu.RLock()
+	defer c.communityMu.RUnlock()
+	if c.communitySyncStatus == "" {
+		return CommunitySyncStatusIdle
+	}
+	return c.communitySyncStatus
+}
+
+// SyncCommunities runs GetJoinedGroups in background and populates the cache
+func (c *Client) SyncCommunities() {
+	c.communityMu.Lock()
+	if c.communitySyncStatus == CommunitySyncStatusSyncing {
+		c.communityMu.Unlock()
+		return // already syncing
+	}
+	c.communitySyncStatus = CommunitySyncStatusSyncing
+	c.communityMu.Unlock()
+
+	c.Logger.Info().Msg("community sync started")
+
+	go func() {
+		communities, err := c.fetchCommunities()
+
+		c.communityMu.Lock()
+		if err != nil {
+			c.Logger.Error().Err(err).Msg("community sync failed")
+			c.communitySyncStatus = CommunitySyncStatusIdle
+		} else {
+			c.communityCache = communities
+			c.communitySyncAt = time.Now()
+			c.communitySyncStatus = CommunitySyncStatusReady
+			c.Logger.Info().Int("count", len(communities)).Msg("community sync completed")
+		}
+		c.communityMu.Unlock()
+
+		if err == nil && c.OnCommunitySyncDone != nil {
+			c.OnCommunitySyncDone()
+		}
+	}()
+}
+
+// GetCachedCommunities returns cached data filtered by params, or nil if not ready
+func (c *Client) GetCachedCommunities(onlyAdmin bool, includeMembers bool) ([]CommunityListItem, bool) {
+	c.communityMu.RLock()
+	defer c.communityMu.RUnlock()
+
+	if c.communityCache == nil || time.Since(c.communitySyncAt) > communityCacheTTL {
+		return nil, false
+	}
+
+	// Filter from full cache
+	var result []CommunityListItem
+	for _, item := range c.communityCache {
+		if onlyAdmin && !item.IsAdmin {
+			continue
+		}
+		if includeMembers {
+			result = append(result, item)
+		} else {
+			// Return without members
+			copy := item
+			copy.Members = nil
+			result = append(result, copy)
+		}
+	}
+
+	return result, true
+}
+
+type MediaRequest struct {
+	To       string `json:"to"`
+	Type     string `json:"type"` // image, video, audio, document
+	URL      string `json:"url"`
+	Caption  string `json:"caption"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	ReplyTo  string `json:"reply_to"`
+}
+
+type PollRequest struct {
+	To            string   `json:"to"`
+	Question      string   `json:"question"`
+	Options       []string `json:"options"`
+	MaxSelections int      `json:"max_selections"`
+}
+
+type StatusRequest struct {
+	Text            string `json:"text"`
+	BackgroundColor string `json:"background_color"`
+	Font            int    `json:"font"`
+}
+
+type CommunityRequest struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	GroupNames  []string `json:"group_names"`
+}
+
+type CommunityInfo struct {
+	CommunityJID string   `json:"community_jid"`
+	GroupJIDs    []string `json:"group_jids"`
+}
+
+type UpdateGroupRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+type Member struct {
+	JID     string `json:"jid"`
+	IsAdmin bool   `json:"is_admin"`
+	IsOwner bool   `json:"is_owner,omitempty"`
+}
+
+func parseJID(jidStr string) (types.JID, error) {
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return types.JID{}, fmt.Errorf("invalid JID: %w", err)
+	}
+	return jid, nil
+}
+
+func (c *Client) SendText(to, text, replyTo string) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(to)
+	if err != nil {
+		return "", err
+	}
+
+	msg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(text),
+		},
+	}
+
+	if replyTo != "" {
+		msg.ExtendedTextMessage.ContextInfo = &waE2E.ContextInfo{
+			StanzaID: proto.String(replyTo),
+		}
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send text: %w", err)
+	}
+
+	return resp.ID, nil
+}
+
+// SendMediaBytes sends media from raw bytes (for file upload)
+func (c *Client) SendMediaBytes(to string, mediaData []byte, mediaType, mimeType, caption, fileName string) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	jid, err := parseJID(to)
+	if err != nil {
+		return "", err
+	}
+
+	var msg *waE2E.Message
+
+	switch mediaType {
+	case "image":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaImage)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload image: %w", err)
+		}
+		msg = &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				Caption:       proto.String(caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+	case "video":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaVideo)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload video: %w", err)
+		}
+		msg = &waE2E.Message{
+			VideoMessage: &waE2E.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				Caption:       proto.String(caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+	case "audio":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaAudio)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload audio: %w", err)
+		}
+		msg = &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+	default: // document
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaDocument)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload document: %w", err)
+		}
+		msg = &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				Caption:       proto.String(caption),
+				FileName:      proto.String(fileName),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send media: %w", err)
+	}
+	return resp.ID, nil
+}
+
+func (c *Client) SendMedia(req MediaRequest) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(req.To)
+	if err != nil {
+		return "", err
+	}
+
+	mediaData, err := downloadMedia(req.URL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download media: %w", err)
+	}
+
+	var msg *waE2E.Message
+
+	switch req.Type {
+	case "image":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaImage)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload image: %w", err)
+		}
+		msg = &waE2E.Message{
+			ImageMessage: &waE2E.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				Caption:       proto.String(req.Caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+
+	case "video":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaVideo)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload video: %w", err)
+		}
+		msg = &waE2E.Message{
+			VideoMessage: &waE2E.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				Caption:       proto.String(req.Caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+
+	case "audio":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaAudio)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload audio: %w", err)
+		}
+		msg = &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+
+	case "document":
+		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaDocument)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload document: %w", err)
+		}
+		msg = &waE2E.Message{
+			DocumentMessage: &waE2E.DocumentMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				Caption:       proto.String(req.Caption),
+				FileName:      proto.String(req.FileName),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			},
+		}
+
+	default:
+		return "", fmt.Errorf("unsupported media type: %s", req.Type)
+	}
+
+	if req.ReplyTo != "" {
+		setContextInfo(msg, req.ReplyTo)
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send media: %w", err)
+	}
+
+	return resp.ID, nil
+}
+
+func (c *Client) SendPoll(req PollRequest) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(req.To)
+	if err != nil {
+		return "", err
+	}
+
+	maxSelections := req.MaxSelections
+	if maxSelections <= 0 {
+		maxSelections = 1
+	}
+
+	pollMsg := c.WAClient.BuildPollCreation(req.Question, req.Options, maxSelections)
+	resp, err := c.WAClient.SendMessage(ctx, jid, pollMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send poll: %w", err)
+	}
+
+	return resp.ID, nil
+}
+
+func (c *Client) SendStatus(req StatusRequest) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	statusJID := types.StatusBroadcastJID
+
+	msg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text:           proto.String(req.Text),
+			BackgroundArgb: proto.Uint32(parseColor(req.BackgroundColor)),
+			Font:           waE2E.ExtendedTextMessage_FontType(req.Font).Enum(),
+		},
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, statusJID, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send status: %w", err)
+	}
+
+	return resp.ID, nil
+}
+
+func (c *Client) DeleteMessages(to string, ids []string, forEveryone bool) (int, int, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(to)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var success, failed int
+	for _, id := range ids {
+		revokeMsg := c.WAClient.BuildRevoke(jid, types.EmptyJID, id)
+		_, err = c.WAClient.SendMessage(ctx, jid, revokeMsg)
+		if err != nil {
+			failed++
+			c.Logger.Warn().Err(err).Str("message_id", id).Msg("failed to delete message")
+		} else {
+			success++
+		}
+	}
+
+	return success, failed, nil
+}
+
+func (c *Client) CreateCommunity(req CommunityRequest) (*CommunityInfo, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	// Create the community (parent group)
+	communityInfo, err := c.WAClient.CreateGroup(ctx, whatsmeow.ReqCreateGroup{
+		Name:         req.Name,
+		Participants: []types.JID{},
+		GroupParent:  types.GroupParent{IsParent: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create community: %w", err)
+	}
+
+	info := &CommunityInfo{
+		CommunityJID: communityInfo.JID.String(),
+	}
+
+	// Create sub-groups linked to the community
+	for _, name := range req.GroupNames {
+		groupInfo, err := c.WAClient.CreateGroup(ctx, whatsmeow.ReqCreateGroup{
+			Name:              name,
+			Participants:      []types.JID{},
+			GroupLinkedParent: types.GroupLinkedParent{LinkedParentJID: communityInfo.JID},
+		})
+		if err != nil {
+			c.Logger.Error().Err(err).Str("group_name", name).Msg("failed to create sub-group")
+			continue
+		}
+		info.GroupJIDs = append(info.GroupJIDs, groupInfo.JID.String())
+	}
+
+	return info, nil
+}
+
+type CommunityListItem struct {
+	JID         string   `json:"jid"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	OwnerJID    string   `json:"owner_jid"`
+	IsAdmin     bool     `json:"is_admin"`
+	IsOwner     bool     `json:"is_owner"`
+	MemberCount int      `json:"member_count"`
+	SubGroups   []string `json:"sub_groups,omitempty"`
+	Members     []Member `json:"members,omitempty"`
+}
+
+// ListCommunities returns communities from cache if available, otherwise returns nil
+// The caller should check the sync status and trigger SyncCommunities if needed
+func (c *Client) ListCommunities(onlyAdmin bool, includeMembers bool) ([]CommunityListItem, error) {
+	// Try cache first
+	if cached, ok := c.GetCachedCommunities(onlyAdmin, includeMembers); ok {
+		return cached, nil
+	}
+
+	// Cache miss - fetch synchronously (fallback for first call or expired cache)
+	communities, err := c.fetchCommunities()
+	if err != nil {
+		return nil, err
+	}
+
+	// Save to cache
+	c.communityMu.Lock()
+	c.communityCache = communities
+	c.communitySyncAt = time.Now()
+	c.communitySyncStatus = CommunitySyncStatusReady
+	c.communityMu.Unlock()
+
+	// Filter
+	var result []CommunityListItem
+	for _, item := range communities {
+		if onlyAdmin && !item.IsAdmin {
+			continue
+		}
+		if !includeMembers {
+			copy := item
+			copy.Members = nil
+			result = append(result, copy)
+		} else {
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+// fetchCommunities does the actual heavy lifting - calls WhatsApp and processes everything
+func (c *Client) fetchCommunities() ([]CommunityListItem, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	groups, err := c.WAClient.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get joined groups: %w", err)
+	}
+
+	// Collect all identifiers that belong to me
+	myUsers := make(map[string]bool)
+	if c.WAClient.Store.ID != nil {
+		myUsers[c.WAClient.Store.ID.User] = true
+	}
+	if !c.WAClient.Store.LID.IsEmpty() {
+		myUsers[c.WAClient.Store.LID.User] = true
+	}
+
+	var communities []CommunityListItem
+
+	for _, g := range groups {
+		if !g.IsParent {
+			continue
+		}
+
+		isAdmin := false
+		isOwner := false
+		for _, p := range g.Participants {
+			if myUsers[p.JID.User] {
+				isAdmin = p.IsAdmin || p.IsSuperAdmin
+				isOwner = p.IsSuperAdmin
+				break
+			}
+		}
+		if !isOwner && myUsers[g.OwnerJID.User] {
+			isOwner = true
+			isAdmin = true
+		}
+
+		item := CommunityListItem{
+			JID:         g.JID.String(),
+			Name:        g.Name,
+			Description: g.Topic,
+			OwnerJID:    c.resolveLID(g.OwnerJID),
+			IsAdmin:     isAdmin,
+			IsOwner:     isOwner,
+			MemberCount: len(g.Participants),
+		}
+
+		// Find sub-groups
+		var subGroups []types.GroupInfo
+		for i, sg := range groups {
+			if sg.LinkedParentJID == g.JID {
+				item.SubGroups = append(item.SubGroups, sg.JID.String())
+				subGroups = append(subGroups, *groups[i])
+			}
+		}
+
+		// Always include members in cache (filter on read)
+		seen := make(map[string]bool)
+		var members []Member
+
+		addParticipants := func(participants []types.GroupParticipant, ownerJID types.JID) {
+			for _, p := range participants {
+				jidStr := c.resolveLID(p.JID)
+				if seen[jidStr] {
+					continue
+				}
+				seen[jidStr] = true
+				members = append(members, Member{
+					JID:     jidStr,
+					IsAdmin: p.IsAdmin || p.IsSuperAdmin,
+					IsOwner: p.JID == ownerJID || p.IsSuperAdmin,
+				})
+			}
+		}
+
+		addParticipants(g.Participants, g.OwnerJID)
+		for _, sg := range subGroups {
+			addParticipants(sg.Participants, sg.OwnerJID)
+		}
+
+		item.Members = members
+		item.MemberCount = len(members)
+
+		communities = append(communities, item)
+	}
+
+	return communities, nil
+}
+
+const waQueryTimeout = 15 * time.Second
+
+func waCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), waQueryTimeout)
+}
+
+type InviteLinkResult struct {
+	JID  string `json:"jid"`
+	Name string `json:"name"`
+	Link string `json:"link"`
+}
+
+func (c *Client) GetInviteLink(jidStr string) ([]InviteLinkResult, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if this is a community (parent group)
+	groupInfo, err := c.WAClient.GetGroupInfo(ctx, jid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group info: %w", err)
+	}
+
+	if !groupInfo.IsParent {
+		// Regular group - return single link
+		link, err := c.WAClient.GetGroupInviteLink(ctx, jid, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get invite link: %w", err)
+		}
+		return []InviteLinkResult{{
+			JID:  jid.String(),
+			Name: groupInfo.Name,
+			Link: link,
+		}}, nil
+	}
+
+	// Community - get invite links for all sub-groups
+	groups, err := c.WAClient.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get joined groups: %w", err)
+	}
+
+	var results []InviteLinkResult
+	for _, sg := range groups {
+		if sg.LinkedParentJID != jid {
+			continue
+		}
+		link, err := c.WAClient.GetGroupInviteLink(ctx, sg.JID, false)
+		if err != nil {
+			c.Logger.Warn().Err(err).Str("group", sg.JID.String()).Msg("failed to get sub-group invite link")
+			continue
+		}
+		results = append(results, InviteLinkResult{
+			JID:  sg.JID.String(),
+			Name: sg.Name,
+			Link: link,
+		})
+	}
+
+	return results, nil
+}
+
+func (c *Client) DeleteCommunity(jidStr string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	err = c.WAClient.LeaveGroup(ctx, jid)
+	if err != nil {
+		return fmt.Errorf("failed to delete community: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) PromoteAdmins(jidStr string, participants []string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	participantJIDs, err := parseJIDs(participants)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.WAClient.UpdateGroupParticipants(ctx, jid, participantJIDs, whatsmeow.ParticipantChangePromote)
+	if err != nil {
+		return fmt.Errorf("failed to promote admins: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) DemoteAdmins(jidStr string, participants []string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	participantJIDs, err := parseJIDs(participants)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.WAClient.UpdateGroupParticipants(ctx, jid, participantJIDs, whatsmeow.ParticipantChangeDemote)
+	if err != nil {
+		return fmt.Errorf("failed to demote admins: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) UpdateGroupInfo(jidStr string, req UpdateGroupRequest) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	if req.Name != nil {
+		if err := c.WAClient.SetGroupName(ctx, jid, *req.Name); err != nil {
+			return fmt.Errorf("failed to update group name: %w", err)
+		}
+	}
+
+	if req.Description != nil {
+		if err := c.WAClient.SetGroupTopic(ctx, jid, "", "", *req.Description); err != nil {
+			return fmt.Errorf("failed to update group description: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) GetMembers(jidStr string) ([]Member, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
+
+	groupInfo, err := c.WAClient.GetGroupInfo(ctx, jid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group info: %w", err)
+	}
+
+	members := make([]Member, 0, len(groupInfo.Participants))
+	for _, p := range groupInfo.Participants {
+		members = append(members, Member{
+			JID:     c.resolveLID(p.JID),
+			IsAdmin: p.IsAdmin || p.IsSuperAdmin,
+			IsOwner: p.IsSuperAdmin,
+		})
+	}
+
+	return members, nil
+}
+
+// ── Profile ──
+
+type ProfileInfo struct {
+	JID         string `json:"jid"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	PictureURL  string `json:"picture_url,omitempty"`
+	PictureID   string `json:"picture_id,omitempty"`
+	PhoneNumber string `json:"phone_number"`
+}
+
+type UpdateProfileRequest struct {
+	Name     string `json:"name,omitempty"`
+	Status   string `json:"status,omitempty"`
+	PhotoURL string `json:"photo_url,omitempty"` // URL to download JPEG from
+}
+
+func (c *Client) GetProfile() (*ProfileInfo, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	myJID := *c.WAClient.Store.ID
+
+	info := &ProfileInfo{
+		JID:         myJID.String(),
+		PhoneNumber: myJID.User,
+	}
+
+	// Get push name from store
+	if c.WAClient.Store.PushName != "" {
+		info.Name = c.WAClient.Store.PushName
+	}
+
+	// Get status and picture via GetUserInfo
+	userInfo, err := c.WAClient.GetUserInfo(ctx, []types.JID{myJID})
+	if err == nil {
+		if ui, ok := userInfo[myJID]; ok {
+			info.Status = ui.Status
+			info.PictureID = ui.PictureID
+		}
+	}
+
+	// Get picture URL
+	pic, err := c.WAClient.GetProfilePictureInfo(ctx, myJID, &whatsmeow.GetProfilePictureParams{})
+	if err == nil && pic != nil {
+		info.PictureURL = pic.URL
+	}
+
+	return info, nil
+}
+
+func (c *Client) UpdateProfile(req UpdateProfileRequest) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	if req.Name != "" {
+		if err := c.WAClient.SendAppState(ctx, appstate.BuildSettingPushName(req.Name)); err != nil {
+			return fmt.Errorf("failed to update name: %w", err)
+		}
+	}
+
+	if req.Status != "" {
+		if err := c.WAClient.SetStatusMessage(ctx, req.Status); err != nil {
+			return fmt.Errorf("failed to update status: %w", err)
+		}
+	}
+
+	if req.PhotoURL != "" {
+		photoData, err := downloadMedia(req.PhotoURL)
+		if err != nil {
+			return fmt.Errorf("failed to download photo: %w", err)
+		}
+		myJID := *c.WAClient.Store.ID
+		if _, err := c.WAClient.SetGroupPhoto(ctx, myJID, photoData); err != nil {
+			return fmt.Errorf("failed to update photo: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ── Community edit ──
+
+type UpdateCommunityRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	PhotoURL    *string `json:"photo_url,omitempty"` // URL to download JPEG from
+}
+
+func (c *Client) UpdateCommunity(jidStr string, req UpdateCommunityRequest) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	if req.Name != nil {
+		if err := c.WAClient.SetGroupName(ctx, jid, *req.Name); err != nil {
+			return fmt.Errorf("failed to update name: %w", err)
+		}
+	}
+
+	if req.Description != nil {
+		if err := c.WAClient.SetGroupTopic(ctx, jid, "", "", *req.Description); err != nil {
+			return fmt.Errorf("failed to update description: %w", err)
+		}
+	}
+
+	if req.PhotoURL != nil {
+		photoData, err := downloadMedia(*req.PhotoURL)
+		if err != nil {
+			return fmt.Errorf("failed to download photo: %w", err)
+		}
+		if _, err := c.WAClient.SetGroupPhoto(ctx, jid, photoData); err != nil {
+			return fmt.Errorf("failed to update photo: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) DeleteCommunityFull(jidStr string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	// Get group info to find sub-groups
+	groups, err := c.WAClient.GetJoinedGroups(ctx)
+	if err == nil {
+		for _, g := range groups {
+			if g.LinkedParentJID == jid {
+				// Unlink and leave sub-group
+				_ = c.WAClient.UnlinkGroup(ctx, jid, g.JID)
+				_ = c.WAClient.LeaveGroup(ctx, g.JID)
+			}
+		}
+	}
+
+	// Leave the community itself
+	if err := c.WAClient.LeaveGroup(ctx, jid); err != nil {
+		return fmt.Errorf("failed to delete community: %w", err)
+	}
+
+	return nil
+}
+
+// resolveLID converts a LID JID to a phone number JID if possible
+func (c *Client) resolveLID(jid types.JID) string {
+	if jid.Server == "lid" {
+		pn, err := c.WAClient.Store.LIDs.GetPNForLID(context.Background(), jid)
+		if err == nil && !pn.IsEmpty() {
+			return pn.String()
+		}
+	}
+	return jid.String()
+}
+
+func parseJIDs(jidStrs []string) ([]types.JID, error) {
+	jids := make([]types.JID, 0, len(jidStrs))
+	for _, s := range jidStrs {
+		jid, err := parseJID(s)
+		if err != nil {
+			return nil, err
+		}
+		jids = append(jids, jid)
+	}
+	return jids, nil
+}
+
+func downloadMedia(url string) ([]byte, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download media: HTTP %d", resp.StatusCode)
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func setContextInfo(msg *waE2E.Message, replyTo string) {
+	ctxInfo := &waE2E.ContextInfo{
+		StanzaID: proto.String(replyTo),
+	}
+
+	if msg.ImageMessage != nil {
+		msg.ImageMessage.ContextInfo = ctxInfo
+	} else if msg.VideoMessage != nil {
+		msg.VideoMessage.ContextInfo = ctxInfo
+	} else if msg.AudioMessage != nil {
+		msg.AudioMessage.ContextInfo = ctxInfo
+	} else if msg.DocumentMessage != nil {
+		msg.DocumentMessage.ContextInfo = ctxInfo
+	}
+}
+
+func parseColor(hex string) uint32 {
+	if hex == "" {
+		return 0xFF1B5E20 // default dark green
+	}
+	var r, g, b uint8
+	if len(hex) == 7 && hex[0] == '#' {
+		fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b)
+	}
+	return uint32(0xFF)<<24 | uint32(r)<<16 | uint32(g)<<8 | uint32(b)
+}

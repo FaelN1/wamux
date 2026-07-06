@@ -1,0 +1,14 @@
+# Normaliza fim de linha: o repositório fica sempre em LF (não quebra shell
+# scripts / Dockerfiles no Linux). O checkout local converte conforme a plataforma.
+* text=auto eol=lf
+
+# Binários — nunca normalizar.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

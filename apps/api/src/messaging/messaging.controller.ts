@@ -1,0 +1,85 @@
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { SendMediaDto } from './dto/send-media.dto';
+import { SendTextDto } from './dto/send-text.dto';
+import { SendPollDto } from './dto/send-poll.dto';
+import { SendButtonsDto } from './dto/send-buttons.dto';
+import { SendListDto } from './dto/send-list.dto';
+import { SendPixDto } from './dto/send-pix.dto';
+import { MessagingService } from './messaging.service';
+
+@ApiTags('Mensagens')
+@ApiSecurity('apikey')
+@Controller('messages')
+@UseGuards(InstanceApiKeyGuard)
+export class MessagingController {
+  constructor(private readonly messaging: MessagingService) {}
+
+  @Post(':id/text')
+  @ApiOperation({ summary: 'Envia texto (com rate-limit e idempotência).' })
+  sendText(@Param('id') id: string, @Body() dto: SendTextDto) {
+    return this.messaging.sendText(id, dto);
+  }
+
+  @Post(':id/media')
+  @ApiOperation({ summary: 'Envia mídia (image/video/audio/document/sticker) por url ou base64.' })
+  sendMedia(@Param('id') id: string, @Body() dto: SendMediaDto) {
+    return this.messaging.sendMedia(id, dto);
+  }
+
+  @Post(':id/poll')
+  @ApiOperation({ summary: 'Envia enquete (voto coletado em GET :id/poll/:messageId).' })
+  sendPoll(@Param('id') id: string, @Body() dto: SendPollDto) {
+    return this.messaging.sendPoll(id, dto);
+  }
+
+  @Get(':id/poll/:messageId')
+  @ApiOperation({ summary: 'Resultado agregado de uma enquete.' })
+  pollResults(@Param('id') id: string, @Param('messageId') messageId: string) {
+    return this.messaging.pollResults(id, messageId);
+  }
+
+  @Post(':id/buttons')
+  @ApiOperation({ summary: 'Envia botões (422 se a engine não entrega; fallbackToText degrada).' })
+  sendButtons(@Param('id') id: string, @Body() dto: SendButtonsDto) {
+    return this.messaging.sendButtons(id, dto);
+  }
+
+  @Post(':id/list')
+  @ApiOperation({ summary: 'Envia lista (menu).' })
+  sendList(@Param('id') id: string, @Body() dto: SendListDto) {
+    return this.messaging.sendList(id, dto);
+  }
+
+  @Post(':id/pix')
+  @ApiOperation({ summary: 'Envia botão PIX (copia-e-cola). Baileys-only, com fallback.' })
+  sendPix(@Param('id') id: string, @Body() dto: SendPixDto) {
+    return this.messaging.sendPix(id, dto);
+  }
+
+  @Get(':id/status/:messageId')
+  @ApiOperation({ summary: 'Ack atual + histórico de timestamps de uma mensagem.' })
+  async status(@Param('id') id: string, @Param('messageId') messageId: string) {
+    const log = await this.messaging.messageStatus(id, messageId);
+    return {
+      messageId: log.id,
+      chatId: log.chatId,
+      ack: log.ack,
+      history: {
+        serverAckAt: log.serverAckAt,
+        deliveredAt: log.deliveredAt,
+        readAt: log.readAt,
+        failedAt: log.failedAt,
+      },
+      failureReason: log.failureReason ?? null,
+    };
+  }
+
+  /** Status de um envio que caiu na fila (throttle). */
+  @Get(':id/queue/:jobId')
+  @ApiOperation({ summary: 'Status de um envio enfileirado (throttle).' })
+  queueStatus(@Param('jobId') jobId: string) {
+    return this.messaging.queueStatus(jobId);
+  }
+}

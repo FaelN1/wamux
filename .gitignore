@@ -1,0 +1,39 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# sessões / auth persistidas em disco (fallback)
+apps/api/sessions/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# artefatos do serviço Go
+services/whatsmeow/server
+services/whatsmeow/server.exe
+services/whatsmeow/sessions/
+services/whatsmeow/logs/
+
+# dados de containers
+data/
+*.sqlite
+
+# logs
+logs/
+*.log
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

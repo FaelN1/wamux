@@ -1,0 +1,152 @@
+name: wamux
+
+services:
+  gateway:
+    # Puxa a imagem publicada por padrão; `docker compose build` builda local.
+    image: ${WAMUX_IMAGE:-wamux-gateway}:${WAMUX_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: wamux-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      WHATSMEOW_URL: http://whatsmeow:3000
+      WHATSMEOW_CALLBACK_BASE: http://gateway:3000
+      RABBITMQ_URI: ${RABBITMQ_URI:-amqp://wamux:wamux@rabbitmq:5672}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      whatsmeow:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - wamux-net
+
+  # Painel web (SPA React/Vite) servido por nginx, com proxy /api -> gateway.
+  web:
+    image: ${WAMUX_WEB_IMAGE:-wamux-web}:${WAMUX_TAG:-latest}
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: wamux-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - gateway
+    networks:
+      - wamux-net
+
+  # Sidecar Go — a API whatsmeow própria (services/whatsmeow).
+  whatsmeow:
+    image: ${WAMUX_WHATSMEOW_IMAGE:-wamux-whatsmeow}:${WAMUX_TAG:-latest}
+    build: ./services/whatsmeow
+    container_name: wamux-whatsmeow
+    restart: unless-stopped
+    environment:
+      APP_PORT: "3000"
+      APP_ENV: production
+      DATABASE_URL: postgres://${DB_USER:-whatsapp}:${DB_PASSWORD:-whatsapp}@postgres:5432/${WHATSMEOW_DB_NAME:-wamux}?sslmode=disable
+      MASTER_API_KEY: ${WHATSMEOW_MASTER_KEY:-troque-esta-master-key-do-go}
+      WHATSMEOW_SESSION_DIR: /app/sessions
+      LOG_DIR: /app/logs
+      LOG_LEVEL: info
+      SENTRY_DSN: ${WHATSMEOW_SENTRY_DSN:-}
+      WEBSHARE_API_KEY: ${WHATSMEOW_WEBSHARE_API_KEY:-}
+    volumes:
+      - whatsmeow_sessions:/app/sessions
+      - whatsmeow_logs:/app/logs
+    ports:
+      - "8081:3000" # docs da API do serviço Go: http://localhost:8081/docs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - wamux-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: wamux-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-whatsapp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-whatsapp}
+      POSTGRES_DB: ${DB_NAME:-whatsapp_api}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # cria o banco separado do serviço Go no primeiro boot
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-whatsapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - wamux-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: wamux-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - wamux-net
+
+  # Broker de eventos (transporte RabbitMQ). UI de gestão em :15672.
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: wamux-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wamux}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-wamux}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # UI de gestão: http://localhost:15672
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - wamux-net
+
+volumes:
+  pgdata:
+  redisdata:
+  whatsmeow_sessions:
+  whatsmeow_logs:
+  rabbitmqdata:
+
+networks:
+  wamux-net:
+    driver: bridge

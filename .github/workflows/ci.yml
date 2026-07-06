@@ -1,0 +1,30 @@
+# CI: type-check + lint + build + testes em todo push/PR.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm type-check
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm --filter @wamux/api test
+      # Spec OpenAPI gerada offline — valida que o contrato compila e publica o artefato.
+      - run: pnpm --filter @wamux/api openapi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: apps/api/openapi.json
