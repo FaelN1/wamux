@@ -35,13 +35,15 @@ Sobe headless com um `docker compose up`: **sem licença, sem ativação manual,
 telemetria obrigatória.**
 
 ```text
-                         ┌──────────────── WAMux (API única) ────────────────┐
-   seu app ──REST──────▶ │  instâncias · mensagens · eventos · anti-ban      │
-       ▲                 └───────────────┬───────────────────────────────────┘
-       │ Webhook · WebSocket · RabbitMQ  │
-       └─────────────────────┐   ┌───────┴───────────┬───────────────┐
-                         Baileys           whatsapp-web.js        Cloud API       whatsmeow
-                        (WebSocket)          (Chromium)        (HTTP · Meta)    (sidecar Go)
+                    ┌─────────────── WAMux · API única ────────────────┐
+ seu app  ──REST──▶ │  instâncias · mensagens · eventos · anti-ban     │
+       ◀──eventos── │  Webhook · WebSocket · RabbitMQ                  │
+                    └─────────────────────────┬────────────────────────┘
+                                              │
+            ┌─────────────────────┬───────────┴───────────┬─────────────────────┐
+            ▼                     ▼                       ▼                     ▼
+         Baileys           whatsapp-web.js            Cloud API             whatsmeow
+       (WebSocket)           (Chromium)             (HTTP · Meta)         (sidecar Go)
 ```
 
 ## 💡 Por que WAMux
