@@ -86,6 +86,7 @@ export class BaileysProvider extends BaseProvider {
   private readonly labelStore = new Map<string, Label>(); // labelId → Label
   private readonly assoc = new Map<string, Set<string>>(); // labelId → Set<jid>
   private readonly polls = new Map<string, WAMessage>(); // pollId → msg (p/ descriptografar votos)
+  private labelsResynced = false; // guard: força o re-sync de labels 1x por processo
 
   constructor(ctx: ProviderContext) {
     super(ctx);
@@ -176,6 +177,7 @@ export class BaileysProvider extends BaseProvider {
         this.qrAttempts = 0;
         this.lastQr = undefined;
         this.setStatus(ConnectionStatus.CONNECTED, { wid: this.sock?.user?.id });
+        void this.resyncLabels(); // popula labels que já existiam antes desta conexão
       }
 
       if (connection === 'close') {
@@ -427,6 +429,29 @@ export class BaileysProvider extends BaseProvider {
   }
 
   // ── etiquetas ─────────────────────────────────────
+
+  /**
+   * Baileys só emite `labels.edit`/`labels.association` para MUTAÇÕES NOVAS do
+   * app-state — labels que já existiam antes desta conexão nunca chegam, e o store
+   * é em memória (some a cada restart). Aqui zeramos a versão da coleção `regular`
+   * (onde labels e associações vivem) e forçamos um snapshot, que re-emite tudo.
+   * Roda uma vez por processo, é best-effort e nunca derruba a conexão. Requer a
+   * app-state-sync-key presente (que some numa migração de engine).
+   */
+  private async resyncLabels(): Promise<void> {
+    if (this.labelsResynced || !this.sock) return;
+    this.labelsResynced = true;
+    try {
+      await this.sock.authState.keys.set({ 'app-state-sync-version': { regular: null } });
+      await this.sock.resyncAppState(['regular'], false);
+      this.logger.log(`[${this.instanceId}] labels re-sincronizados (${this.labelStore.size})`);
+    } catch (err) {
+      this.labelsResynced = false;
+      this.logger.warn(
+        `[${this.instanceId}] falha ao re-sincronizar labels: ${(err as Error).message}`,
+      );
+    }
+  }
 
   async listLabels(): Promise<Label[]> {
     return [...this.labelStore.values()].filter((l) => l.active !== false);
