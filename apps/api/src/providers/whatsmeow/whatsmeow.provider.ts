@@ -3,6 +3,11 @@ import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
   ConnectionStatus,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipantAction,
+  GroupParticipantResult,
+  GroupSetting,
   MessageAckStatus,
   MessageType,
   NormalizedMessage,
@@ -44,6 +49,9 @@ export class WhatsmeowProvider extends BaseProvider {
   }
 
   readonly portableCredentials = true;
+
+  /** whatsmeow entrega grupos via sidecar Go; o resto ainda é 501 uniforme. */
+  readonly capabilities = { groups: true };
 
   async initialize(): Promise<void> {
     await this.ensureProvisioned();
@@ -332,6 +340,125 @@ export class WhatsmeowProvider extends BaseProvider {
   private str(key: string): string {
     const v = this.config[key];
     return typeof v === 'string' ? v : '';
+  }
+
+  // ── grupos (via sidecar Go) ──────────────────────────
+
+  async listGroups(): Promise<GroupInfo[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get('/group');
+      return res.data as GroupInfo[];
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async groupMetadata(jid: string): Promise<GroupInfo> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/group/${encodeURIComponent(jid)}`);
+      return res.data as GroupInfo;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<GroupInfo> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().post('/group', {
+        subject: input.subject,
+        participants: input.participants.map((p) => this.toJid(p)),
+        description: input.description,
+      });
+      return res.data as GroupInfo;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateGroupParticipants(
+    jid: string,
+    participants: string[],
+    action: GroupParticipantAction,
+  ): Promise<GroupParticipantResult[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().post(`/group/${encodeURIComponent(jid)}/participants`, {
+        participants: participants.map((p) => this.toJid(p)),
+        action,
+      });
+      return res.data as GroupParticipantResult[];
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateGroupSubject(jid: string, subject: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/group/${encodeURIComponent(jid)}/subject`, { subject });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateGroupDescription(jid: string, description: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/group/${encodeURIComponent(jid)}/description`, { description });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateGroupSetting(jid: string, setting: GroupSetting): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/group/${encodeURIComponent(jid)}/setting`, { setting });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async getGroupInviteCode(jid: string): Promise<string> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/group/${encodeURIComponent(jid)}/invite`);
+      return (res.data as { code?: string }).code ?? '';
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async revokeGroupInviteCode(jid: string): Promise<string> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().delete(`/group/${encodeURIComponent(jid)}/invite`);
+      return (res.data as { code?: string }).code ?? '';
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async joinGroupViaInvite(code: string): Promise<{ jid: string }> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().post('/group/join', { code });
+      return { jid: (res.data as { jid?: string }).jid ?? '' };
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async leaveGroup(jid: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().post(`/group/${encodeURIComponent(jid)}/leave`, {});
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
   }
 
   private client(): AxiosInstance {

@@ -1,0 +1,1112 @@
+openapi: 3.0.3
+info:
+  title: WAMux WhatsApp GO
+  description: |
+    API REST para integracao com WhatsApp via whatsmeow.
+    Suporta multiplas instancias simultaneas, cada uma com sua propria API Key.
+
+    ## Autenticacao
+
+    - **Master API Key**: Para rotas administrativas (criar/listar/deletar instancias). Header `X-API-Key` ou query `?api_key=`.
+    - **Instance API Key**: Para rotas de mensagem, perfil, comunidade. Header `X-API-Key`.
+
+    ## WebSocket
+
+    Conecte em `ws://host/ws` para receber eventos em tempo real:
+    `CONNECTION_STATUS`, `MESSAGE`, `MESSAGE_STATUS`, `GROUP_MEMBERS_EDIT`, `COMMUNITY_SYNC_DONE`.
+  version: 1.0.0
+  contact:
+    name: WAMux
+servers:
+  - url: /api/v1
+    description: API v1
+
+tags:
+  - name: Instance (Admin)
+    description: Gerenciamento de instancias (Master API Key)
+  - name: Instance
+    description: Operacoes da instancia (Instance API Key)
+  - name: Messages
+    description: Envio e gerenciamento de mensagens
+  - name: Broadcast
+    description: Envio em massa
+  - name: Profile
+    description: Perfil do WhatsApp
+  - name: Community
+    description: Comunidades e grupos
+  - name: Stats
+    description: Metricas e estatisticas
+
+components:
+  securitySchemes:
+    MasterKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Master API Key configurada no .env
+    InstanceKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API Key da instancia (retornada na criacao)
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        status:
+          type: integer
+
+    Instance:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        company_name:
+          type: string
+        side_name:
+          type: string
+        api_key:
+          type: string
+        webhook_url:
+          type: string
+        webhook_events:
+          type: array
+          items:
+            type: string
+            enum: [CONNECTION_STATUS, MESSAGE, MESSAGE_STATUS, GROUP_MEMBERS_EDIT]
+        proxy_url:
+          type: string
+        status:
+          type: string
+          enum: [disconnected, connecting, connected, logged_out]
+        phone_number:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateInstanceRequest:
+      type: object
+      required: [company_name, side_name]
+      properties:
+        company_name:
+          type: string
+          example: WAMux Ltda
+        side_name:
+          type: string
+          example: loja-centro
+        phone_number:
+          type: string
+          example: "5511999999999"
+        webhook_url:
+          type: string
+          example: https://meusite.com/webhook
+        webhook_events:
+          type: array
+          items:
+            type: string
+          example: [CONNECTION_STATUS, MESSAGE, MESSAGE_STATUS]
+        proxy_url:
+          type: string
+          example: socks5://user:pass@host:port
+
+    UpdateInstanceRequest:
+      type: object
+      properties:
+        company_name:
+          type: string
+        side_name:
+          type: string
+        webhook_url:
+          type: string
+        webhook_events:
+          type: array
+          items:
+            type: string
+        proxy_url:
+          type: string
+
+    ProfileInfo:
+      type: object
+      properties:
+        jid:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        picture_url:
+          type: string
+        picture_id:
+          type: string
+        phone_number:
+          type: string
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Push name
+        status:
+          type: string
+          description: Recado / About
+        photo_url:
+          type: string
+          description: URL de imagem JPEG
+
+    SendTextRequest:
+      type: object
+      required: [to, text]
+      properties:
+        to:
+          type: string
+          example: "5511999999999@s.whatsapp.net"
+        text:
+          type: string
+          example: Ola, tudo bem?
+        reply_to:
+          type: string
+          description: Message ID para responder
+
+    SendMediaRequest:
+      type: object
+      required: [to, type, url]
+      properties:
+        to:
+          type: string
+          example: "5511999999999@s.whatsapp.net"
+        type:
+          type: string
+          enum: [image, video, audio, document]
+        url:
+          type: string
+          example: https://exemplo.com/foto.jpg
+        caption:
+          type: string
+        file_name:
+          type: string
+        mime_type:
+          type: string
+        reply_to:
+          type: string
+
+    SendPollRequest:
+      type: object
+      required: [to, question, options]
+      properties:
+        to:
+          type: string
+        question:
+          type: string
+          example: Qual sua cor favorita?
+        options:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          example: [Azul, Vermelho, Verde]
+        max_selections:
+          type: integer
+          default: 1
+
+    SendStatusRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        background_color:
+          type: string
+          example: "#1B5E20"
+        font:
+          type: integer
+          minimum: 0
+          maximum: 4
+
+    BroadcastRequest:
+      type: object
+      required: [recipients, text]
+      properties:
+        recipients:
+          type: array
+          items:
+            type: string
+          example: ["5511999999999@s.whatsapp.net", "5511888888888@s.whatsapp.net"]
+        text:
+          type: string
+        delay_ms:
+          type: integer
+          default: 2000
+          minimum: 1000
+          description: Delay em ms entre cada envio
+
+    DeleteMessageRequest:
+      type: object
+      required: [to, message_ids]
+      properties:
+        to:
+          type: string
+        message_ids:
+          type: array
+          items:
+            type: string
+        for_everyone:
+          type: boolean
+          default: false
+
+    MessageSent:
+      type: object
+      properties:
+        message_id:
+          type: string
+        status:
+          type: string
+          example: sent
+
+    CommunityRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        group_names:
+          type: array
+          items:
+            type: string
+
+    UpdateCommunityRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        photo_url:
+          type: string
+
+    CommunityListItem:
+      type: object
+      properties:
+        jid:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        owner_jid:
+          type: string
+        is_admin:
+          type: boolean
+        is_owner:
+          type: boolean
+        member_count:
+          type: integer
+        sub_groups:
+          type: array
+          items:
+            type: string
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+
+    Member:
+      type: object
+      properties:
+        jid:
+          type: string
+        is_admin:
+          type: boolean
+        is_owner:
+          type: boolean
+
+    InviteLink:
+      type: object
+      properties:
+        jid:
+          type: string
+        name:
+          type: string
+        link:
+          type: string
+
+    MessageLogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        instance_id:
+          type: string
+        direction:
+          type: string
+          enum: [incoming, outgoing]
+        message_id:
+          type: string
+        chat:
+          type: string
+        sender:
+          type: string
+        msg_type:
+          type: string
+        text:
+          type: string
+        has_media:
+          type: boolean
+        mime_type:
+          type: string
+        status:
+          type: string
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    MessageStats:
+      type: object
+      properties:
+        total_sent:
+          type: integer
+        total_received:
+          type: integer
+        sent_today:
+          type: integer
+        received_today:
+          type: integer
+        errors_today:
+          type: integer
+
+    QueueItem:
+      type: object
+      properties:
+        id:
+          type: string
+        instance_id:
+          type: string
+        msg_type:
+          type: string
+        payload:
+          type: object
+        status:
+          type: string
+          enum: [pending, processing, sent, failed]
+        attempts:
+          type: integer
+        max_attempts:
+          type: integer
+        result_id:
+          type: string
+        error:
+          type: string
+        scheduled_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+paths:
+  # ── Instance (Admin) ──
+  /instance:
+    post:
+      tags: [Instance (Admin)]
+      summary: Criar instancia
+      security:
+        - MasterKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+      responses:
+        '201':
+          description: Instancia criada
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Instance'
+                  - type: object
+                    properties:
+                      pairing_code:
+                        type: string
+
+  /instance/all:
+    get:
+      tags: [Instance (Admin)]
+      summary: Listar todas as instancias
+      security:
+        - MasterKey: []
+      responses:
+        '200':
+          description: Lista de instancias
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Instance'
+                  total:
+                    type: integer
+
+  /instance/{id}:
+    put:
+      tags: [Instance (Admin)]
+      summary: Atualizar instancia
+      security:
+        - MasterKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstanceRequest'
+      responses:
+        '200':
+          description: Instancia atualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+    delete:
+      tags: [Instance (Admin)]
+      summary: Deletar instancia
+      security:
+        - MasterKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+
+  /instance/{id}/connect:
+    get:
+      tags: [Instance (Admin)]
+      summary: Conectar instancia (SSE com QR + Pairing Code)
+      description: |
+        Retorna um stream Server-Sent Events com:
+        - `event: pairing_code` - codigo numerico para parear
+        - `event: qr` - dados do QR code para gerar imagem
+        - `event: success` - conexao estabelecida
+        - `event: timeout` - tempo esgotado
+      security:
+        - MasterKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: phone
+          in: query
+          schema:
+            type: string
+          description: Numero do telefone para pairing code
+      responses:
+        '200':
+          description: Stream SSE
+          content:
+            text/event-stream: {}
+
+  /instance/{id}/disconnect:
+    post:
+      tags: [Instance (Admin)]
+      summary: Desconectar instancia (logout + limpa sessao)
+      security:
+        - MasterKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Desconectada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: disconnected
+
+  # ── Instance (per-instance) ──
+  /instance/:
+    get:
+      tags: [Instance]
+      summary: Obter dados da instancia
+      security:
+        - InstanceKey: []
+      responses:
+        '200':
+          description: Dados da instancia
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+    put:
+      tags: [Instance]
+      summary: Atualizar instancia
+      security:
+        - InstanceKey: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstanceRequest'
+      responses:
+        '200':
+          description: Atualizada
+
+  /instance/status:
+    get:
+      tags: [Instance]
+      summary: Status de conexao
+      security:
+        - InstanceKey: []
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instance_id:
+                    type: string
+                  status:
+                    type: string
+
+  /instance/qrcode:
+    get:
+      tags: [Instance]
+      summary: Gerar QR Code / Pairing Code
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: phone
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: QR e/ou pairing code
+
+  # ── Messages ──
+  /message/text:
+    post:
+      tags: [Messages]
+      summary: Enviar mensagem de texto
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendTextRequest'
+      responses:
+        '200':
+          description: Mensagem enviada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSent'
+
+  /message/media:
+    post:
+      tags: [Messages]
+      summary: Enviar midia (imagem, video, audio, documento)
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMediaRequest'
+      responses:
+        '200':
+          description: Midia enviada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSent'
+
+  /message/poll:
+    post:
+      tags: [Messages]
+      summary: Enviar enquete
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendPollRequest'
+      responses:
+        '200':
+          description: Enquete enviada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSent'
+
+  /message/status:
+    post:
+      tags: [Messages]
+      summary: Postar status (stories)
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendStatusRequest'
+      responses:
+        '200':
+          description: Status postado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageSent'
+
+  /message:
+    delete:
+      tags: [Messages]
+      summary: Deletar mensagens
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteMessageRequest'
+      responses:
+        '200':
+          description: Resultado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: integer
+                  failed:
+                    type: integer
+
+  # ── Broadcast ──
+  /message/broadcast:
+    post:
+      tags: [Broadcast]
+      summary: Enviar mensagem em massa
+      description: |
+        Enfileira mensagens para multiplos destinatarios com delay entre cada envio.
+        Retorna IDs da fila para acompanhar o status individualmente.
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BroadcastRequest'
+      responses:
+        '202':
+          description: Mensagens enfileiradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: queued
+                  total:
+                    type: integer
+                  queue_ids:
+                    type: array
+                    items:
+                      type: string
+                  delay_ms:
+                    type: integer
+
+  /message/queue/{id}:
+    get:
+      tags: [Broadcast]
+      summary: Status de item da fila
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status do item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueItem'
+
+  /message/history:
+    get:
+      tags: [Messages]
+      summary: Historico de mensagens
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Historico paginado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MessageLogEntry'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /message/stats:
+    get:
+      tags: [Messages]
+      summary: Estatisticas de mensagens da instancia
+      security:
+        - InstanceKey: []
+      responses:
+        '200':
+          description: Estatisticas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageStats'
+
+  # ── Profile ──
+  /profile:
+    get:
+      tags: [Profile]
+      summary: Obter perfil do WhatsApp
+      security:
+        - InstanceKey: []
+      responses:
+        '200':
+          description: Informacoes do perfil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileInfo'
+    put:
+      tags: [Profile]
+      summary: Editar perfil do WhatsApp
+      description: Todos os campos sao opcionais. Envie apenas os que deseja alterar.
+      security:
+        - InstanceKey: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Perfil atualizado
+
+  # ── Community ──
+  /community:
+    get:
+      tags: [Community]
+      summary: Listar comunidades (com cache)
+      description: |
+        Retorna comunidades do cache. Se o cache nao estiver pronto, retorna 202.
+        O campo `source` indica se veio do cache ou do WhatsApp.
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: only_admin
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Retornar apenas comunidades onde sou admin/dono
+        - name: include_members
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Incluir lista de membros
+      responses:
+        '200':
+          description: Lista de comunidades
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  communities:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CommunityListItem'
+                  total:
+                    type: integer
+                  source:
+                    type: string
+                    enum: [cache, live]
+        '202':
+          description: Sincronizando - aguarde evento COMMUNITY_SYNC_DONE via WebSocket
+    post:
+      tags: [Community]
+      summary: Criar comunidade
+      security:
+        - InstanceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommunityRequest'
+      responses:
+        '201':
+          description: Comunidade criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  community_jid:
+                    type: string
+                  group_jids:
+                    type: array
+                    items:
+                      type: string
+
+  /community/sync:
+    post:
+      tags: [Community]
+      summary: Forcar sincronizacao de comunidades
+      security:
+        - InstanceKey: []
+      responses:
+        '200':
+          description: Sync iniciado
+
+  /community/{jid}:
+    put:
+      tags: [Community]
+      summary: Editar comunidade/grupo (nome, descricao, foto)
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommunityRequest'
+      responses:
+        '200':
+          description: Atualizado
+    delete:
+      tags: [Community]
+      summary: Deletar comunidade (desvincula sub-grupos)
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletada
+
+  /community/{jid}/link:
+    get:
+      tags: [Community]
+      summary: Links de convite
+      description: Para grupos retorna 1 link. Para comunidades retorna links de todos os sub-grupos.
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Links
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  links:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InviteLink'
+                  total:
+                    type: integer
+
+  /community/{jid}/members:
+    get:
+      tags: [Community]
+      summary: Listar membros do grupo
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Membros
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Member'
+                  total:
+                    type: integer
+
+  /community/{jid}/admins/promote:
+    post:
+      tags: [Community]
+      summary: Promover participantes a admin
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participants]
+              properties:
+                participants:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Promovidos
+
+  /community/{jid}/admins/demote:
+    post:
+      tags: [Community]
+      summary: Rebaixar admins
+      security:
+        - InstanceKey: []
+      parameters:
+        - name: jid
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participants]
+              properties:
+                participants:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Rebaixados
+
+  # ── Stats ──
+  /stats:
+    get:
+      tags: [Stats]
+      summary: Estatisticas globais de mensagens
+      security:
+        - MasterKey: []
+      responses:
+        '200':
+          description: Estatisticas globais
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageStats'

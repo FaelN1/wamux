@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"strings"
+
 	"wamux_go/internal/instance"
 	"wamux_go/internal/middleware"
 	"wamux_go/internal/whatsapp"
@@ -263,4 +265,217 @@ func (h *GroupHandler) GetMembers(c *fiber.Ctx) error {
 		"members": members,
 		"total":   len(members),
 	})
+}
+
+// ── Regular groups ──────────────────────────────────────────────
+
+// GET /api/v1/group
+func (h *GroupHandler) ListGroups(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	groups, err := client.ListGroups()
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(groups)
+}
+
+// GET /api/v1/group/:jid
+func (h *GroupHandler) GetGroupInfo(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	if jid == "" {
+		return invalidRequestResponse(c, "JID is required.")
+	}
+	info, err := client.GroupInfo(jid)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(info)
+}
+
+// POST /api/v1/group
+func (h *GroupHandler) CreateGroup(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Subject      string   `json:"subject"`
+		Participants []string `json:"participants"`
+		Description  string   `json:"description"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	if req.Subject == "" {
+		return invalidRequestResponse(c, "subject is required.")
+	}
+	info, err := client.CreateGroup(req.Subject, req.Participants)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	if req.Description != "" {
+		if e := client.SetGroupDescription(info.JID, req.Description); e == nil {
+			if updated, e2 := client.GroupInfo(info.JID); e2 == nil {
+				info = updated
+			}
+		}
+	}
+	return c.Status(fiber.StatusCreated).JSON(info)
+}
+
+// POST /api/v1/group/:jid/participants
+func (h *GroupHandler) UpdateParticipants(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	var req struct {
+		Participants []string `json:"participants"`
+		Action       string   `json:"action"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	if len(req.Participants) == 0 {
+		return invalidRequestResponse(c, "participants are required.")
+	}
+	results, err := client.UpdateGroupParticipants(jid, req.Participants, req.Action)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(results)
+}
+
+// PUT /api/v1/group/:jid/subject
+func (h *GroupHandler) SetGroupSubject(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	var req struct {
+		Subject string `json:"subject"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	if err := client.SetGroupSubject(jid, req.Subject); err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(fiber.Map{"status": "updated"})
+}
+
+// PUT /api/v1/group/:jid/description
+func (h *GroupHandler) SetGroupDescription(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	if err := client.SetGroupDescription(jid, req.Description); err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(fiber.Map{"status": "updated"})
+}
+
+// PUT /api/v1/group/:jid/setting
+func (h *GroupHandler) SetGroupSetting(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	var req struct {
+		Setting string `json:"setting"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	if err := client.SetGroupSetting(jid, req.Setting); err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(fiber.Map{"status": "updated"})
+}
+
+// GET /api/v1/group/:jid/invite
+func (h *GroupHandler) GetGroupInvite(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	link, err := client.GroupInviteLink(jid, false)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(inviteResponse(link))
+}
+
+// DELETE /api/v1/group/:jid/invite
+func (h *GroupHandler) RevokeGroupInvite(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	link, err := client.GroupInviteLink(jid, true)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(inviteResponse(link))
+}
+
+// POST /api/v1/group/join
+func (h *GroupHandler) JoinGroup(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+	code := strings.TrimPrefix(strings.TrimSpace(req.Code), "https://chat.whatsapp.com/")
+	if code == "" {
+		return invalidRequestResponse(c, "code is required.")
+	}
+	jid, err := client.JoinGroup(code)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(fiber.Map{"jid": jid})
+}
+
+// POST /api/v1/group/:jid/leave
+func (h *GroupHandler) LeaveGroup(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	jid := decodeParam(c, "jid")
+	if err := client.LeaveGroup(jid); err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.JSON(fiber.Map{"status": "left"})
+}
+
+func inviteResponse(link string) fiber.Map {
+	code := strings.TrimPrefix(link, "https://chat.whatsapp.com/")
+	return fiber.Map{"code": code, "link": link}
 }

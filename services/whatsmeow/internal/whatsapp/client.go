@@ -824,6 +824,216 @@ type UpdateProfileRequest struct {
 	PhotoURL string `json:"photo_url,omitempty"` // URL to download JPEG from
 }
 
+// ── Regular groups ──────────────────────────────────────────────
+
+type GroupParticipantInfo struct {
+	ID   string `json:"id"`
+	Role string `json:"role"` // member | admin | superadmin
+}
+
+type GroupInfoResponse struct {
+	JID          string                 `json:"jid"`
+	Subject      string                 `json:"subject"`
+	Description  string                 `json:"description,omitempty"`
+	Owner        string                 `json:"owner,omitempty"`
+	Participants []GroupParticipantInfo `json:"participants"`
+	Size         int                    `json:"size"`
+	Creation     int64                  `json:"creation,omitempty"`
+	Announce     bool                   `json:"announce"`
+	Restrict     bool                   `json:"restrict"`
+	IsCommunity  bool                   `json:"isCommunity"`
+}
+
+type GroupParticipantResult struct {
+	JID    string `json:"jid"`
+	Status string `json:"status"`
+}
+
+func (c *Client) groupInfoToResponse(g *types.GroupInfo) GroupInfoResponse {
+	parts := make([]GroupParticipantInfo, 0, len(g.Participants))
+	for _, p := range g.Participants {
+		role := "member"
+		switch {
+		case p.IsSuperAdmin:
+			role = "superadmin"
+		case p.IsAdmin:
+			role = "admin"
+		}
+		parts = append(parts, GroupParticipantInfo{ID: c.resolveLID(p.JID), Role: role})
+	}
+	return GroupInfoResponse{
+		JID:          g.JID.String(),
+		Subject:      g.Name,
+		Description:  g.Topic,
+		Owner:        c.resolveLID(g.OwnerJID),
+		Participants: parts,
+		Size:         len(g.Participants),
+		Creation:     g.GroupCreated.Unix(),
+		Announce:     g.IsAnnounce,
+		Restrict:     g.IsLocked,
+		IsCommunity:  g.IsParent,
+	}
+}
+
+// ListGroups returns every group the account participates in.
+func (c *Client) ListGroups() ([]GroupInfoResponse, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	groups, err := c.WAClient.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	result := make([]GroupInfoResponse, 0, len(groups))
+	for _, g := range groups {
+		result = append(result, c.groupInfoToResponse(g))
+	}
+	return result, nil
+}
+
+func (c *Client) GroupInfo(jidStr string) (*GroupInfoResponse, error) {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	g, err := c.WAClient.GetGroupInfo(ctx, jid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group info: %w", err)
+	}
+	res := c.groupInfoToResponse(g)
+	return &res, nil
+}
+
+func (c *Client) CreateGroup(subject string, participants []string) (*GroupInfoResponse, error) {
+	pjids, err := parseJIDs(participants)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	g, err := c.WAClient.CreateGroup(ctx, whatsmeow.ReqCreateGroup{
+		Name:         subject,
+		Participants: pjids,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create group: %w", err)
+	}
+	res := c.groupInfoToResponse(g)
+	return &res, nil
+}
+
+func (c *Client) UpdateGroupParticipants(jidStr string, participants []string, action string) ([]GroupParticipantResult, error) {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
+	pjids, err := parseJIDs(participants)
+	if err != nil {
+		return nil, err
+	}
+	var change whatsmeow.ParticipantChange
+	switch action {
+	case "add":
+		change = whatsmeow.ParticipantChangeAdd
+	case "remove":
+		change = whatsmeow.ParticipantChangeRemove
+	case "promote":
+		change = whatsmeow.ParticipantChangePromote
+	case "demote":
+		change = whatsmeow.ParticipantChangeDemote
+	default:
+		return nil, fmt.Errorf("invalid action: %s (use add|remove|promote|demote)", action)
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	res, err := c.WAClient.UpdateGroupParticipants(ctx, jid, pjids, change)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update participants: %w", err)
+	}
+	out := make([]GroupParticipantResult, 0, len(res))
+	for _, r := range res {
+		status := "200"
+		if r.Error != 0 {
+			status = fmt.Sprintf("%d", r.Error)
+		}
+		out = append(out, GroupParticipantResult{JID: c.resolveLID(r.JID), Status: status})
+	}
+	return out, nil
+}
+
+func (c *Client) SetGroupSubject(jidStr, subject string) error {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	return c.WAClient.SetGroupName(ctx, jid, subject)
+}
+
+func (c *Client) SetGroupDescription(jidStr, description string) error {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	return c.WAClient.SetGroupTopic(ctx, jid, "", "", description)
+}
+
+func (c *Client) SetGroupSetting(jidStr, setting string) error {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	switch setting {
+	case "announcement":
+		return c.WAClient.SetGroupAnnounce(ctx, jid, true)
+	case "not_announcement":
+		return c.WAClient.SetGroupAnnounce(ctx, jid, false)
+	case "locked":
+		return c.WAClient.SetGroupLocked(ctx, jid, true)
+	case "unlocked":
+		return c.WAClient.SetGroupLocked(ctx, jid, false)
+	default:
+		return fmt.Errorf("invalid setting: %s", setting)
+	}
+}
+
+// GroupInviteLink returns the invite link; reset=true revokes and regenerates it.
+func (c *Client) GroupInviteLink(jidStr string, reset bool) (string, error) {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	return c.WAClient.GetGroupInviteLink(ctx, jid, reset)
+}
+
+func (c *Client) JoinGroup(code string) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := c.WAClient.JoinGroupWithLink(ctx, code)
+	if err != nil {
+		return "", fmt.Errorf("failed to join group: %w", err)
+	}
+	return jid.String(), nil
+}
+
+func (c *Client) LeaveGroup(jidStr string) error {
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	return c.WAClient.LeaveGroup(ctx, jid)
+}
+
 func (c *Client) GetProfile() (*ProfileInfo, error) {
 	ctx, cancel := waCtx()
 	defer cancel()
