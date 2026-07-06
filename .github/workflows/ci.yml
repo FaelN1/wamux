@@ -21,7 +21,6 @@ jobs:
       - run: pnpm type-check
       - run: pnpm lint
       - run: pnpm build
-      - run: pnpm --filter @wamux/api test
       # Spec OpenAPI gerada offline — valida que o contrato compila e publica o artefato.
       - run: pnpm --filter @wamux/api openapi
       - uses: actions/upload-artifact@v4

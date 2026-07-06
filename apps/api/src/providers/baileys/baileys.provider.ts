@@ -8,8 +8,6 @@ import { classifyJid } from '../jid.util';
 import {
   ConnectionStatus,
   CreateNewsletterInput,
-  FetchMessagesOptions,
-  FetchMessagesPage,
   HistoryCursor,
   Label,
   LabelTarget,

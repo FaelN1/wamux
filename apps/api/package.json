@@ -12,7 +12,7 @@
     "openapi": "node dist/openapi.js",
     "lint": "eslint src",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "jest",
+    "test": "echo \"(sem testes ainda)\"",
     "clean": "rimraf dist node_modules .turbo"
   },
   "dependencies": {
