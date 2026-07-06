@@ -1,11 +1,16 @@
 import { Readable } from 'node:stream';
-import { Client, RemoteAuth, Message, MessageMedia, Poll } from 'whatsapp-web.js';
+import { Client, GroupChat, RemoteAuth, Message, MessageMedia, Poll } from 'whatsapp-web.js';
 import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import { classifyJid } from '../jid.util';
 import { PostgresRemoteStore } from './postgres-store';
 import {
   ConnectionStatus,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipantAction,
+  GroupParticipantResult,
+  GroupSetting,
   Label,
   LabelTarget,
   MessageAckStatus,
@@ -42,6 +47,7 @@ export class WebjsProvider extends BaseProvider {
     media: true,
     poll: true,
     pollResults: true,
+    groups: true,
     buttons: false,
     list: false,
     pix: false,
@@ -250,6 +256,148 @@ export class WebjsProvider extends BaseProvider {
     const m = await raw.downloadMedia();
     if (!m?.data) return null;
     return Readable.from(Buffer.from(m.data, 'base64'));
+  }
+
+  // ── grupos (gated por capabilities.groups) ─────────
+
+  async listGroups(): Promise<GroupInfo[]> {
+    const chats = await this.requireClient().getChats();
+    return chats.filter((c) => c.isGroup).map((c) => this.toGroup(c as GroupChat));
+  }
+
+  async groupMetadata(jid: string): Promise<GroupInfo> {
+    return this.toGroup(await this.getGroupChat(jid));
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<GroupInfo> {
+    const res = await this.requireClient().createGroup(input.subject, input.participants);
+    // createGroup devolve uma string (mensagem de erro) quando falha; senão um
+    // CreateGroupResult cujo `gid` é o ChatId do grupo recém-criado.
+    if (typeof res === 'string') throw new Error(`webjs: falha ao criar grupo: ${res}`);
+    const gid = res.gid._serialized;
+    if (input.description) {
+      const chat = await this.getGroupChat(gid);
+      await chat.setDescription(input.description);
+    }
+    return this.groupMetadata(gid);
+  }
+
+  async updateGroupParticipants(
+    jid: string,
+    participants: string[],
+    action: GroupParticipantAction,
+  ): Promise<GroupParticipantResult[]> {
+    const chat = await this.getGroupChat(jid);
+    // Só `add` devolve detalhe por participante (mapa id → { code }); remove/
+    // promote/demote devolvem apenas um { status } agregado do lote.
+    switch (action) {
+      case 'add': {
+        const res = await chat.addParticipants(participants);
+        if (res && typeof res === 'object') {
+          return Object.entries(
+            res as Record<string, { code?: number; statusCode?: number }>,
+          ).map(([id, r]) => ({ jid: id, status: String(r?.code ?? r?.statusCode ?? 200) }));
+        }
+        return participants.map((p) => ({ jid: p, status: '200' }));
+      }
+      case 'remove': {
+        const res = await chat.removeParticipants(participants);
+        return participants.map((p) => ({ jid: p, status: String(res?.status ?? 200) }));
+      }
+      case 'promote': {
+        const res = await chat.promoteParticipants(participants);
+        return participants.map((p) => ({ jid: p, status: String(res?.status ?? 200) }));
+      }
+      case 'demote': {
+        const res = await chat.demoteParticipants(participants);
+        return participants.map((p) => ({ jid: p, status: String(res?.status ?? 200) }));
+      }
+    }
+  }
+
+  async updateGroupSubject(jid: string, subject: string): Promise<void> {
+    const chat = await this.getGroupChat(jid);
+    await chat.setSubject(subject);
+  }
+
+  async updateGroupDescription(jid: string, description: string): Promise<void> {
+    const chat = await this.getGroupChat(jid);
+    await chat.setDescription(description);
+  }
+
+  async updateGroupSetting(jid: string, setting: GroupSetting): Promise<void> {
+    const chat = await this.getGroupChat(jid);
+    switch (setting) {
+      case 'announcement':
+        await chat.setMessagesAdminsOnly(true);
+        break;
+      case 'not_announcement':
+        await chat.setMessagesAdminsOnly(false);
+        break;
+      case 'locked':
+        await chat.setInfoAdminsOnly(true);
+        break;
+      case 'unlocked':
+        await chat.setInfoAdminsOnly(false);
+        break;
+    }
+  }
+
+  async getGroupInviteCode(jid: string): Promise<string> {
+    const chat = await this.getGroupChat(jid);
+    return chat.getInviteCode();
+  }
+
+  async revokeGroupInviteCode(jid: string): Promise<string> {
+    const chat = await this.getGroupChat(jid);
+    // revokeInvite() resolve void na lib; buscamos o novo código gerado.
+    await chat.revokeInvite();
+    return chat.getInviteCode();
+  }
+
+  async joinGroupViaInvite(code: string): Promise<{ jid: string }> {
+    const clean = code.replace(/^https?:\/\/chat\.whatsapp\.com\//, '').trim();
+    const r = await this.requireClient().acceptInvite(clean);
+    return { jid: r };
+  }
+
+  async leaveGroup(jid: string): Promise<void> {
+    const chat = await this.getGroupChat(jid);
+    await chat.leave();
+  }
+
+  /** Aceita jid já formatado (…@g.us) ou o id cru do grupo. */
+  private toGroupJid(jid: string): string {
+    return jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@g.us`;
+  }
+
+  private async getGroupChat(jid: string): Promise<GroupChat> {
+    return (await this.requireClient().getChatById(this.toGroupJid(jid))) as GroupChat;
+  }
+
+  private toGroup(chat: GroupChat): GroupInfo {
+    // `groupMetadata` é a model crua do WhatsApp Web (não exposta no .d.ts):
+    // traz desc/announce/restrict/creation que a interface GroupChat omite.
+    const meta = (
+      chat as unknown as {
+        groupMetadata?: { desc?: string; announce?: boolean; restrict?: boolean; creation?: number };
+      }
+    ).groupMetadata;
+    const participants = chat.participants ?? [];
+    return {
+      jid: chat.id._serialized,
+      subject: chat.name,
+      description: meta?.desc,
+      owner: chat.owner?._serialized,
+      participants: participants.map((p) => ({
+        id: p.id._serialized,
+        role: p.isSuperAdmin ? 'superadmin' : p.isAdmin ? 'admin' : 'member',
+      })),
+      size: participants.length,
+      announce: meta?.announce,
+      restrict: meta?.restrict,
+      creation: meta?.creation,
+    };
   }
 
   private requireClient(): Client {

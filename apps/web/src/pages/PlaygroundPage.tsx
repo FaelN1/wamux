@@ -69,6 +69,18 @@ const PRESETS: Preset[] = [
   { group: 'Canais', label: 'Detalhe', method: 'GET', path: '/instances/{id}/newsletters/{jid}' },
   { group: 'Canais', label: 'Seguir', method: 'POST', path: '/instances/{id}/newsletters/{jid}/follow' },
   { group: 'Canais', label: 'Deixar de seguir', method: 'DELETE', path: '/instances/{id}/newsletters/{jid}/follow' },
+  // Grupos
+  { group: 'Grupos', label: 'Listar', method: 'GET', path: '/instances/{id}/groups' },
+  { group: 'Grupos', label: 'Criar', method: 'POST', path: '/instances/{id}/groups', body: '{ "subject": "Meu grupo", "participants": ["5511999999999"], "description": "" }' },
+  { group: 'Grupos', label: 'Metadados', method: 'GET', path: '/instances/{id}/groups/{jid}' },
+  { group: 'Grupos', label: 'Participantes (add/remove/promote/demote)', method: 'POST', path: '/instances/{id}/groups/{jid}/participants', body: '{ "participants": ["5511999999999"], "action": "add" }' },
+  { group: 'Grupos', label: 'Alterar assunto', method: 'PUT', path: '/instances/{id}/groups/{jid}/subject', body: '{ "subject": "Novo nome" }' },
+  { group: 'Grupos', label: 'Alterar descrição', method: 'PUT', path: '/instances/{id}/groups/{jid}/description', body: '{ "description": "Nova descrição" }' },
+  { group: 'Grupos', label: 'Config (announce/locked)', method: 'PUT', path: '/instances/{id}/groups/{jid}/setting', body: '{ "setting": "announcement" }' },
+  { group: 'Grupos', label: 'Link de convite', method: 'GET', path: '/instances/{id}/groups/{jid}/invite' },
+  { group: 'Grupos', label: 'Revogar convite', method: 'DELETE', path: '/instances/{id}/groups/{jid}/invite' },
+  { group: 'Grupos', label: 'Entrar por convite', method: 'POST', path: '/instances/{id}/groups/join', body: '{ "code": "https://chat.whatsapp.com/XXXXXXXXXXXX" }' },
+  { group: 'Grupos', label: 'Sair', method: 'POST', path: '/instances/{id}/groups/{jid}/leave' },
   // Identidade
   { group: 'Identidade', label: 'Resolver (phone -> jid/lid)', method: 'GET', path: '/instances/{id}/identity/resolve?phone=5511999999999' },
   // Histórico

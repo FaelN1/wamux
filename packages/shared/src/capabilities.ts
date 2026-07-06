@@ -24,6 +24,8 @@ export interface ProviderCapabilities {
   media?: boolean;
   /** canais (@newsletter). */
   newsletter?: boolean;
+  /** gerência de grupos (criar, participantes, admins, assunto, convite). */
+  groups?: boolean;
   /** history sync (import de histórico). */
   history?: boolean;
   // ── interativos — granular por tipo ──

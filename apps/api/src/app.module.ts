@@ -19,6 +19,7 @@ import { EventsModule } from './events/events.module';
 import { LabelsModule } from './labels/labels.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
+import { GroupsModule } from './groups/groups.module';
 import { HistoryModule } from './history/history.module';
 import { HealthModule } from './health/health.module';
 
@@ -73,6 +74,7 @@ import { HealthModule } from './health/health.module';
     LabelsModule,
     ContactsModule,
     NewsletterModule,
+    GroupsModule,
     HistoryModule,
     HealthModule,
   ],

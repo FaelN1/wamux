@@ -1,6 +1,7 @@
 export * from './enums';
 export * from './messages';
 export * from './contacts';
+export * from './groups';
 export * from './capabilities';
 export * from './filters';
 export * from './anti-ban';

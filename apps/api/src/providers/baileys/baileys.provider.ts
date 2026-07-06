@@ -8,6 +8,11 @@ import { classifyJid } from '../jid.util';
 import {
   ConnectionStatus,
   CreateNewsletterInput,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipantAction,
+  GroupParticipantResult,
+  GroupSetting,
   HistoryCursor,
   Label,
   LabelTarget,
@@ -63,6 +68,7 @@ export class BaileysProvider extends BaseProvider {
     markRead: true,
     media: true,
     newsletter: true,
+    groups: true,
     history: true,
     poll: true,
     pollResults: true,
@@ -589,6 +595,94 @@ export class BaileysProvider extends BaseProvider {
     };
     const res = (await sock.newsletterCreate?.(input.name, { description: input.description })) ?? {};
     return this.toNewsletter({ ...res, name: input.name, description: input.description });
+  }
+
+  // ── grupos ─────────────────────────────────────────
+
+  async listGroups(): Promise<GroupInfo[]> {
+    const groups = await this.socket().groupFetchAllParticipating();
+    return Object.values(groups).map((g) => this.toGroup(g as unknown as Record<string, unknown>));
+  }
+
+  async groupMetadata(jid: string): Promise<GroupInfo> {
+    const meta = await this.socket().groupMetadata(this.toGroupJid(jid));
+    return this.toGroup(meta as unknown as Record<string, unknown>);
+  }
+
+  async createGroup(input: CreateGroupInput): Promise<GroupInfo> {
+    const meta = await this.socket().groupCreate(
+      input.subject,
+      input.participants.map((p) => this.toJid(p)),
+    );
+    if (input.description) await this.socket().groupUpdateDescription(meta.id, input.description);
+    return this.groupMetadata(meta.id);
+  }
+
+  async updateGroupParticipants(
+    jid: string,
+    participants: string[],
+    action: GroupParticipantAction,
+  ): Promise<GroupParticipantResult[]> {
+    const res = await this.socket().groupParticipantsUpdate(
+      this.toGroupJid(jid),
+      participants.map((p) => this.toJid(p)),
+      action,
+    );
+    return res.map((r) => ({ jid: r.jid ?? '', status: String(r.status) }));
+  }
+
+  async updateGroupSubject(jid: string, subject: string): Promise<void> {
+    await this.socket().groupUpdateSubject(this.toGroupJid(jid), subject);
+  }
+
+  async updateGroupDescription(jid: string, description: string): Promise<void> {
+    await this.socket().groupUpdateDescription(this.toGroupJid(jid), description);
+  }
+
+  async updateGroupSetting(jid: string, setting: GroupSetting): Promise<void> {
+    await this.socket().groupSettingUpdate(this.toGroupJid(jid), setting);
+  }
+
+  async getGroupInviteCode(jid: string): Promise<string> {
+    return (await this.socket().groupInviteCode(this.toGroupJid(jid))) ?? '';
+  }
+
+  async revokeGroupInviteCode(jid: string): Promise<string> {
+    return (await this.socket().groupRevokeInvite(this.toGroupJid(jid))) ?? '';
+  }
+
+  async joinGroupViaInvite(code: string): Promise<{ jid: string }> {
+    const clean = code.replace(/^https?:\/\/chat\.whatsapp\.com\//, '').trim();
+    return { jid: (await this.socket().groupAcceptInvite(clean)) ?? '' };
+  }
+
+  async leaveGroup(jid: string): Promise<void> {
+    await this.socket().groupLeave(this.toGroupJid(jid));
+  }
+
+  /** Aceita jid já formatado (…@g.us) ou o id cru do grupo. */
+  private toGroupJid(jid: string): string {
+    return jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@g.us`;
+  }
+
+  private toGroup(g: Record<string, unknown>): GroupInfo {
+    const parts =
+      (g.participants as Array<{ id: string; admin?: string | null }> | undefined) ?? [];
+    return {
+      jid: String(g.id ?? ''),
+      subject: String(g.subject ?? ''),
+      description: (g.desc as string | undefined) ?? undefined,
+      owner: (g.owner as string | undefined) ?? (g.subjectOwner as string | undefined),
+      participants: parts.map((p) => ({
+        id: p.id,
+        role: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : 'member',
+      })),
+      size: (g.size as number | undefined) ?? parts.length,
+      creation: g.creation as number | undefined,
+      announce: (g.announce as boolean | undefined) ?? false,
+      restrict: (g.restrict as boolean | undefined) ?? false,
+      isCommunity: (g.isCommunity as boolean | undefined) ?? false,
+    };
   }
 
   private toNewsletter(n: Record<string, unknown>): NewsletterInfo {

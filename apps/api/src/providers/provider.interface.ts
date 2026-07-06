@@ -15,6 +15,11 @@ import {
   MessageStatusUpdate,
   NewsletterInfo,
   CreateNewsletterInput,
+  GroupInfo,
+  CreateGroupInput,
+  GroupParticipantAction,
+  GroupParticipantResult,
+  GroupSetting,
   NormalizedMessage,
   NumberCheckResult,
   PollResults,
@@ -207,6 +212,23 @@ export interface WhatsAppProvider {
   followNewsletter?(jid: string): Promise<void>;
   unfollowNewsletter?(jid: string): Promise<void>;
   createNewsletter?(input: CreateNewsletterInput): Promise<NewsletterInfo>;
+
+  // ── grupos (gated por capabilities.groups) ─────────
+  listGroups?(): Promise<GroupInfo[]>;
+  groupMetadata?(jid: string): Promise<GroupInfo>;
+  createGroup?(input: CreateGroupInput): Promise<GroupInfo>;
+  updateGroupParticipants?(
+    jid: string,
+    participants: string[],
+    action: GroupParticipantAction,
+  ): Promise<GroupParticipantResult[]>;
+  updateGroupSubject?(jid: string, subject: string): Promise<void>;
+  updateGroupDescription?(jid: string, description: string): Promise<void>;
+  updateGroupSetting?(jid: string, setting: GroupSetting): Promise<void>;
+  getGroupInviteCode?(jid: string): Promise<string>;
+  revokeGroupInviteCode?(jid: string): Promise<string>;
+  joinGroupViaInvite?(code: string): Promise<{ jid: string }>;
+  leaveGroup?(jid: string): Promise<void>;
 
   // ── histórico (gated por capabilities.history) ─────
   /**
