@@ -77,24 +77,36 @@ function FunnelRow({
   );
 }
 
+/** Preenche os últimos 14 dias (UTC), zerando os sem dado — série sempre com 14 colunas. */
+function last14Days(data: { date: string; sent: number; received: number }[]) {
+  const map = new Map(data.map((d) => [d.date, d]));
+  const now = new Date();
+  const out: { date: string; sent: number; received: number }[] = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+    const key = d.toISOString().slice(0, 10);
+    out.push(map.get(key) ?? { date: key, sent: 0, received: 0 });
+  }
+  return out;
+}
+
 function DailyBars({ data }: { data: { date: string; sent: number; received: number }[] }) {
-  const max = Math.max(1, ...data.map((d) => Math.max(d.sent, d.received)));
-  if (!data.length)
-    return <p className="text-sm text-muted-foreground">Sem mensagens no período.</p>;
+  const days = last14Days(data);
+  const max = Math.max(1, ...days.map((d) => Math.max(d.sent, d.received)));
   return (
-    <div className="flex h-32 items-end gap-1">
-      {data.map((d) => (
+    <div className="flex h-32 items-stretch gap-1">
+      {days.map((d) => (
         <div
           key={d.date}
-          className="flex flex-1 items-end justify-center gap-0.5"
-          title={`${d.date}: ${d.sent} enviadas · ${d.received} recebidas`}
+          className="flex flex-1 items-end justify-center gap-0.5 rounded bg-muted/40"
+          title={`${d.date.slice(5)} · ${d.sent} enviadas · ${d.received} recebidas`}
         >
           <div
             className="w-1/2 rounded-t bg-primary"
             style={{ height: `${(d.sent / max) * 100}%` }}
           />
           <div
-            className="w-1/2 rounded-t bg-muted-foreground/40"
+            className="w-1/2 rounded-t bg-sky-400"
             style={{ height: `${(d.received / max) * 100}%` }}
           />
         </div>
@@ -238,7 +250,7 @@ export function DashboardPage() {
                 <span className="size-2 rounded-sm bg-primary" /> enviadas
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-sm bg-muted-foreground/40" /> recebidas
+                <span className="size-2 rounded-sm bg-sky-400" /> recebidas
               </span>
               {m && (
                 <span className="ml-auto">7 dias: {fmt(m.last7d.sent + m.last7d.received)}</span>
