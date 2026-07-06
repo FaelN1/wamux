@@ -8,6 +8,7 @@ import {
   type ProviderType,
   type QrResponse,
   type SettingsUpdate,
+  type StatsOverview,
   type WamuxSettings,
 } from '@wamux/shared';
 
@@ -48,7 +49,11 @@ export async function rawRequest(
   const headers: Record<string, string> = { apikey: apiKeyOverride?.trim() || getApiKey() };
   if (hasBody) headers['Content-Type'] = 'application/json';
   try {
-    const res = await fetch(BASE + path, { method: upper, headers, body: hasBody ? body : undefined });
+    const res = await fetch(BASE + path, {
+      method: upper,
+      headers,
+      body: hasBody ? body : undefined,
+    });
     const text = await res.text();
     let data: unknown = null;
     try {
@@ -114,6 +119,14 @@ export function useInstances() {
     queryKey: ['instances'],
     queryFn: () => req<Instance[]>('/instances'),
     refetchInterval: 4000,
+  });
+}
+
+export function useStats() {
+  return useQuery({
+    queryKey: ['stats'],
+    queryFn: () => req<StatsOverview>('/stats/overview'),
+    refetchInterval: 10_000,
   });
 }
 

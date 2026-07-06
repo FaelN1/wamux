@@ -8,4 +8,5 @@ export * from './anti-ban';
 export * from './instance';
 export * from './events';
 export * from './settings';
+export * from './stats';
 export * from './credentials';

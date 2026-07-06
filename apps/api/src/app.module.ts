@@ -21,6 +21,7 @@ import { ContactsModule } from './contacts/contacts.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
 import { GroupsModule } from './groups/groups.module';
 import { HistoryModule } from './history/history.module';
+import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -76,6 +77,7 @@ import { HealthModule } from './health/health.module';
     NewsletterModule,
     GroupsModule,
     HistoryModule,
+    StatsModule,
     HealthModule,
   ],
 })
