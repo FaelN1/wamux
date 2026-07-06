@@ -14,6 +14,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -37,6 +38,11 @@ type Client struct {
 	communitySyncAt time.Time
 	communitySyncStatus string
 	OnCommunitySyncDone func() // called when background sync finishes
+
+	// Label store (fed by app-state events)
+	labelMu    sync.RWMutex
+	labelStore map[string]LabelInfo       // labelID -> label
+	labelAssoc map[string]map[string]bool // labelID -> set of chat JIDs
 }
 
 // InvalidateCommunityCache marks cache as stale so next read triggers a re-sync
@@ -1032,6 +1038,150 @@ func (c *Client) LeaveGroup(jidStr string) error {
 	ctx, cancel := waCtx()
 	defer cancel()
 	return c.WAClient.LeaveGroup(ctx, jid)
+}
+
+// ── Labels (WhatsApp Business) ──────────────────────────────────
+
+type LabelInfo struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Color int    `json:"color"`
+}
+
+// ProcessAppStateEvent captura as mutações de etiqueta (app-state) num store local.
+// O whatsmeow não expõe GetLabels(); as etiquetas chegam por evento.
+func (c *Client) ProcessAppStateEvent(evt interface{}) {
+	switch v := evt.(type) {
+	case *events.LabelEdit:
+		c.labelMu.Lock()
+		if c.labelStore == nil {
+			c.labelStore = map[string]LabelInfo{}
+		}
+		if v.Action.GetDeleted() {
+			delete(c.labelStore, v.LabelID)
+		} else {
+			c.labelStore[v.LabelID] = LabelInfo{
+				ID:    v.LabelID,
+				Name:  v.Action.GetName(),
+				Color: int(v.Action.GetColor()),
+			}
+		}
+		c.labelMu.Unlock()
+	case *events.LabelAssociationChat:
+		c.labelMu.Lock()
+		if c.labelAssoc == nil {
+			c.labelAssoc = map[string]map[string]bool{}
+		}
+		set := c.labelAssoc[v.LabelID]
+		if set == nil {
+			set = map[string]bool{}
+			c.labelAssoc[v.LabelID] = set
+		}
+		if v.Action.GetLabeled() {
+			set[v.JID.String()] = true
+		} else {
+			delete(set, v.JID.String())
+		}
+		c.labelMu.Unlock()
+	}
+}
+
+func (c *Client) ListLabels() []LabelInfo {
+	c.labelMu.RLock()
+	defer c.labelMu.RUnlock()
+	out := make([]LabelInfo, 0, len(c.labelStore))
+	for _, l := range c.labelStore {
+		out = append(out, l)
+	}
+	return out
+}
+
+func (c *Client) GetChatLabels(chatJID string) []LabelInfo {
+	c.labelMu.RLock()
+	defer c.labelMu.RUnlock()
+	out := make([]LabelInfo, 0)
+	for id, set := range c.labelAssoc {
+		if set[chatJID] {
+			if l, ok := c.labelStore[id]; ok {
+				out = append(out, l)
+			} else {
+				out = append(out, LabelInfo{ID: id})
+			}
+		}
+	}
+	return out
+}
+
+func (c *Client) GetLabelChats(labelID string) []string {
+	c.labelMu.RLock()
+	defer c.labelMu.RUnlock()
+	out := make([]string, 0)
+	for jid := range c.labelAssoc[labelID] {
+		out = append(out, jid)
+	}
+	return out
+}
+
+func (c *Client) UpsertLabel(id, name string, color int) (LabelInfo, error) {
+	if id == "" {
+		id = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	if err := c.WAClient.SendAppState(ctx, appstate.BuildLabelEdit(id, name, int32(color), false)); err != nil {
+		return LabelInfo{}, fmt.Errorf("failed to upsert label: %w", err)
+	}
+	label := LabelInfo{ID: id, Name: name, Color: color}
+	c.labelMu.Lock()
+	if c.labelStore == nil {
+		c.labelStore = map[string]LabelInfo{}
+	}
+	c.labelStore[id] = label
+	c.labelMu.Unlock()
+	return label, nil
+}
+
+func (c *Client) DeleteLabel(id string) error {
+	c.labelMu.RLock()
+	existing := c.labelStore[id]
+	c.labelMu.RUnlock()
+	ctx, cancel := waCtx()
+	defer cancel()
+	if err := c.WAClient.SendAppState(ctx, appstate.BuildLabelEdit(id, existing.Name, int32(existing.Color), true)); err != nil {
+		return fmt.Errorf("failed to delete label: %w", err)
+	}
+	c.labelMu.Lock()
+	delete(c.labelStore, id)
+	c.labelMu.Unlock()
+	return nil
+}
+
+func (c *Client) SetChatLabel(chatJIDStr, labelID string, on bool) error {
+	jid, err := parseJID(chatJIDStr)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := waCtx()
+	defer cancel()
+	if err := c.WAClient.SendAppState(ctx, appstate.BuildLabelChat(jid, labelID, on)); err != nil {
+		return fmt.Errorf("failed to set chat label: %w", err)
+	}
+	c.labelMu.Lock()
+	if c.labelAssoc == nil {
+		c.labelAssoc = map[string]map[string]bool{}
+	}
+	set := c.labelAssoc[labelID]
+	if set == nil {
+		set = map[string]bool{}
+		c.labelAssoc[labelID] = set
+	}
+	if on {
+		set[jid.String()] = true
+	} else {
+		delete(set, jid.String())
+	}
+	c.labelMu.Unlock()
+	return nil
 }
 
 func (c *Client) GetProfile() (*ProfileInfo, error) {

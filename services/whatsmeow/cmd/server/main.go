@@ -183,6 +183,7 @@ func main() {
 	instanceHandler := handler.NewInstanceHandler(manager, instanceRepo)
 	messageHandler := handler.NewMessageHandler(manager, msgQueue)
 	groupHandler := handler.NewGroupHandler(manager)
+	labelHandler := handler.NewLabelHandler(manager)
 	profileHandler := handler.NewProfileHandler(manager)
 	chatHandler := handler.NewChatHandler(manager, chatStore)
 
@@ -311,6 +312,15 @@ func main() {
 	groupGroup.Get("/:jid/invite", groupHandler.GetGroupInvite)
 	groupGroup.Delete("/:jid/invite", groupHandler.RevokeGroupInvite)
 	groupGroup.Post("/:jid/leave", groupHandler.LeaveGroup)
+
+	// Labels (WhatsApp Business — Instance API Key)
+	labelGroup := api.Group("/label", middleware.APIKeyAuth(instanceRepo))
+	labelGroup.Get("/", labelHandler.List)
+	labelGroup.Post("/", labelHandler.Upsert)
+	labelGroup.Delete("/:id", labelHandler.Delete)
+	labelGroup.Put("/:id/chat", labelHandler.SetChat)
+	labelGroup.Get("/:id/chats", labelHandler.Chats)
+	api.Get("/chat-labels/:jid", middleware.APIKeyAuth(instanceRepo), labelHandler.ChatLabels)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)

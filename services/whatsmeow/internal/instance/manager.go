@@ -575,6 +575,8 @@ func (m *Manager) createClient(inst *Instance) (*whatsapp.Client, error) {
 	}
 
 	waClient.AddEventHandler(eventHandler.Handle)
+	// Captura etiquetas (app-state) num store local para list/associação.
+	waClient.AddEventHandler(client.ProcessAppStateEvent)
 
 	m.mu.Lock()
 	m.clients[inst.ID] = client

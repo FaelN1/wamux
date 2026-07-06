@@ -8,6 +8,8 @@ import {
   GroupParticipantAction,
   GroupParticipantResult,
   GroupSetting,
+  Label,
+  LabelTarget,
   MessageAckStatus,
   MessageType,
   NormalizedMessage,
@@ -16,6 +18,7 @@ import {
   SendMediaInput,
   SendResult,
   SendTextInput,
+  UpsertLabelInput,
 } from '../provider.types';
 
 /**
@@ -50,8 +53,8 @@ export class WhatsmeowProvider extends BaseProvider {
 
   readonly portableCredentials = true;
 
-  /** whatsmeow entrega grupos via sidecar Go; o resto ainda é 501 uniforme. */
-  readonly capabilities = { groups: true };
+  /** whatsmeow entrega grupos e etiquetas via sidecar Go; o resto é 501 uniforme. */
+  readonly capabilities = { groups: true, labels: true };
 
   async initialize(): Promise<void> {
     await this.ensureProvisioned();
@@ -212,7 +215,9 @@ export class WhatsmeowProvider extends BaseProvider {
         );
       }
     } catch (e) {
-      this.logger.warn(`whatsmeow: limpeza de órfã falhou (segue mesmo assim): ${(e as Error).message}`);
+      this.logger.warn(
+        `whatsmeow: limpeza de órfã falhou (segue mesmo assim): ${(e as Error).message}`,
+      );
     }
   }
 
@@ -456,6 +461,83 @@ export class WhatsmeowProvider extends BaseProvider {
     try {
       await this.ensureProvisioned();
       await this.client().post(`/group/${encodeURIComponent(jid)}/leave`, {});
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  // ── etiquetas (via sidecar Go) ───────────────────────
+
+  private toLabel(l: { id: string; name: string; color: number }): Label {
+    return { id: l.id, name: l.name, color: { index: l.color }, active: true };
+  }
+
+  async listLabels(): Promise<Label[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get('/label');
+      return (res.data as Array<{ id: string; name: string; color: number }>).map((l) =>
+        this.toLabel(l),
+      );
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async upsertLabel(input: UpsertLabelInput): Promise<Label> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().post('/label', {
+        id: input.id,
+        name: input.name,
+        color: input.color?.index ?? 0,
+      });
+      return this.toLabel(res.data as { id: string; name: string; color: number });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async deleteLabel(labelId: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().delete(`/label/${encodeURIComponent(labelId)}`);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async setLabelForTarget(labelId: string, target: LabelTarget, on: boolean): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/label/${encodeURIComponent(labelId)}/chat`, {
+        chat_jid: this.toJid(target.id),
+        on,
+      });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async getLabelsForTarget(target: LabelTarget): Promise<Label[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(
+        `/chat-labels/${encodeURIComponent(this.toJid(target.id))}`,
+      );
+      return (res.data as Array<{ id: string; name: string; color: number }>).map((l) =>
+        this.toLabel(l),
+      );
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async getChatsForLabel(labelId: string): Promise<string[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/label/${encodeURIComponent(labelId)}/chats`);
+      return (res.data as { chats?: string[] }).chats ?? [];
     } catch (e) {
       throw new Error(this.goError(e));
     }
