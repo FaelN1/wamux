@@ -44,6 +44,16 @@ func (h *LabelHandler) List(c *fiber.Ctx) error {
 	return c.JSON(client.ListLabels())
 }
 
+// POST /api/v1/label/sync — força o full-sync do app-state e devolve as etiquetas.
+func (h *LabelHandler) Sync(c *fiber.Ctx) error {
+	_, client, err := h.getConnectedClient(c)
+	if err != nil {
+		return err
+	}
+	client.SyncLabels()
+	return c.JSON(fiber.Map{"labels": client.ListLabels()})
+}
+
 // POST /api/v1/label
 func (h *LabelHandler) Upsert(c *fiber.Ctx) error {
 	_, client, err := h.getConnectedClient(c)

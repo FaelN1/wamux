@@ -1052,6 +1052,10 @@ type LabelInfo struct {
 // O whatsmeow não expõe GetLabels(); as etiquetas chegam por evento.
 func (c *Client) ProcessAppStateEvent(evt interface{}) {
 	switch v := evt.(type) {
+	case *events.Connected:
+		// Full-sync da coleção `regular` (etiquetas) no connect: re-emite as
+		// existentes e faz o whatsmeow pedir a app-state key ao celular se faltar.
+		go c.SyncLabels()
 	case *events.LabelEdit:
 		c.labelMu.Lock()
 		if c.labelStore == nil {
@@ -1083,6 +1087,16 @@ func (c *Client) ProcessAppStateEvent(evt interface{}) {
 			delete(set, v.JID.String())
 		}
 		c.labelMu.Unlock()
+	}
+}
+
+// SyncLabels força um full-sync da coleção `regular` do app-state (etiquetas).
+// Best-effort: se faltar a app-state key, o whatsmeow a solicita ao celular.
+func (c *Client) SyncLabels() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.WAClient.FetchAppState(ctx, appstate.WAPatchRegular, true, false); err != nil {
+		c.Logger.Warn().Err(err).Msg("failed to sync labels (app-state)")
 	}
 }
 

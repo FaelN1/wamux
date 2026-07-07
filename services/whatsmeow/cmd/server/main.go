@@ -316,6 +316,7 @@ func main() {
 	// Labels (WhatsApp Business — Instance API Key)
 	labelGroup := api.Group("/label", middleware.APIKeyAuth(instanceRepo))
 	labelGroup.Get("/", labelHandler.List)
+	labelGroup.Post("/sync", labelHandler.Sync)
 	labelGroup.Post("/", labelHandler.Upsert)
 	labelGroup.Delete("/:id", labelHandler.Delete)
 	labelGroup.Put("/:id/chat", labelHandler.SetChat)
