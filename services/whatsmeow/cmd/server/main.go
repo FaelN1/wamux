@@ -14,6 +14,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	sentryfiber "github.com/getsentry/sentry-go/fiber"
 	"github.com/gofiber/fiber/v2"
+	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
 
@@ -133,7 +134,20 @@ func main() {
 		ErrorHandler: errorHandler,
 	})
 
-	// Sentry middleware - captures panics and provides per-request hub
+	// Recover middleware - fasthttp has no built-in panic recovery, so an
+	// unhandled panic anywhere in a handler would otherwise crash the whole
+	// process and take down every tenant sharing this container. Registered
+	// FIRST (= outermost) so it's the last line of defense: it catches the
+	// repanic thrown by the Sentry middleware below and hands control to the
+	// app's centralized ErrorHandler instead of letting the process die.
+	app.Use(fiberrecover.New())
+
+	// Sentry middleware - captures panics and provides per-request hub.
+	// Repanic stays true (its default recommended use) so Sentry gets the
+	// panic reported before handing it back up the chain — safe here only
+	// because the outer fiberrecover middleware above is guaranteed to catch
+	// the repanic and turn it into a normal 500 response instead of crashing
+	// the process (fasthttp itself has no recovery of its own).
 	app.Use(sentryfiber.New(sentryfiber.Options{
 		Repanic:         true,
 		WaitForDelivery: false,

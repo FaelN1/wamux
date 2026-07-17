@@ -98,8 +98,16 @@ func (c *Client) SyncCommunities() {
 	}()
 }
 
-// GetCachedCommunities returns cached data filtered by params, or nil if not ready
+// GetCachedCommunities returns cached data filtered by params, or nil if not ready.
+// Defense-in-depth: a nil receiver here previously crashed the whole multi-tenant
+// process (see manager.GetClient / handler getConnectedClient helpers, which are
+// the actual fix for how a nil *Client could reach this method in the first
+// place). Guard it directly too so a future caller mistake degrades to "no
+// cache" instead of a panic.
 func (c *Client) GetCachedCommunities(onlyAdmin bool, includeMembers bool) ([]CommunityListItem, bool) {
+	if c == nil {
+		return nil, false
+	}
 	c.communityMu.RLock()
 	defer c.communityMu.RUnlock()
 

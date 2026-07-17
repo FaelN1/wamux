@@ -32,6 +32,8 @@ export interface GroupInfo {
   isCommunity?: boolean;
   /** código de convite atual, quando conhecido. */
   inviteCode?: string;
+  /** URL da foto de perfil do grupo, quando disponível. */
+  pictureUrl?: string;
 }
 
 export interface CreateGroupInput {

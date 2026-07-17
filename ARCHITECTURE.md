@@ -14,6 +14,17 @@ Cada lib fala um "dialeto". Definimos **um modelo normalizado**
 adapter que traduz do seu dialeto para o canônico. Nada fora de
 `apps/api/src/providers/*` conhece Baileys/webjs/Cloud/whatsmeow.
 
+Recursos opcionais (etiquetas, grupos, canais/newsletter, **comunidades**) são
+declarados em `ProviderCapabilities` e checados pelo serviço REST correspondente
+(`groups/`, `newsletter/`, `communities/`) antes de chamar o método opcional do
+provider — engine sem suporte responde **501** de forma uniforme, nunca 500.
+Comunidades (grupo-pai + subgrupos vinculados) têm adapter em `baileys` (nativo,
+socket `w:g2`) e `whatsmeow` (via CRUD nativo do sidecar Go, `/community`);
+`webjs` fica 501 de propósito — a lib não tem API de Community (tentativa dos
+mantenedores abandonada) — e `cloud` (Meta) também 501 (fora do escopo da Cloud
+API oficial). Cada engine tem lacunas pontuais documentadas nos adapters e em
+`docs/community-contract-handoff.md`.
+
 ```
              ┌───────────────── WhatsAppProvider (contrato) ─────────────────┐
              │ initialize · getQRCode · sendText · sendMedia · logout ·      │
@@ -48,6 +59,7 @@ balancear cada request. Solução:
 `MessagingService` → `InstanceManager.requireLive(id)` → provider.sendText → lib.
 
 **Entrada:**
+
 - Baileys/webjs: chega no socket → adapter normaliza → `emit('message')` →
   `InstanceManager` → `WebhookService.dispatch` → **fila BullMQ** →
   `WebhookProcessor` entrega no webhook do cliente (retry/backoff/DLQ).
@@ -56,13 +68,13 @@ balancear cada request. Solução:
 
 ## Persistência
 
-| Dado                        | Onde         | Entidade            |
-| --------------------------- | ------------ | ------------------- |
-| Metadados da instância      | Postgres     | `InstanceEntity`    |
-| Credenciais de auth/sessão  | Postgres     | `SessionEntity`     |
-| Log de mensagens (opcional) | Postgres     | `MessageLogEntity`  |
+| Dado                        | Onde         | Entidade                 |
+| --------------------------- | ------------ | ------------------------ |
+| Metadados da instância      | Postgres     | `InstanceEntity`         |
+| Credenciais de auth/sessão  | Postgres     | `SessionEntity`          |
+| Log de mensagens (opcional) | Postgres     | `MessageLogEntity`       |
 | Posse instância→worker      | Redis        | (chaves `wa:registry:*`) |
-| Filas de webhook            | Redis/BullMQ | —                   |
+| Filas de webhook            | Redis/BullMQ | —                        |
 
 O [`SessionService`](apps/api/src/session/session.service.ts) implementa `SessionStore`,
 usado pelos adapters (ex.: [auth do Baileys](apps/api/src/providers/baileys/baileys-auth-state.ts))
@@ -89,6 +101,7 @@ apps/api/src/
   providers/            # núcleo: contrato + adapters + factory + registry
     baileys/  webjs/  cloud/  whatsmeow/
   instance/             # CRUD + motor de runtime (manager) + webhooks inbound
+  groups/  newsletter/  communities/  # feature modules capability-gated (ver acima)
   messaging/            # envio (fachada + fila outbound BullMQ)
   throttle/             # rate-limit (token bucket) + idempotência
   webhook/              # entrega outbound (BullMQ)

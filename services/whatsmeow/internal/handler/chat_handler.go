@@ -23,19 +23,30 @@ func NewChatHandler(manager *instance.Manager, chatStore *chat.Store) *ChatHandl
 }
 
 
-func (h *ChatHandler) getClient(c *fiber.Ctx) (*instance.Instance, *whatsapp.Client, error) {
+// getClient resolves the instance + live client for the request, writing the
+// appropriate error response itself. The boolean return is the ONLY signal
+// callers should use to decide whether to proceed — see the identical comment on
+// GroupHandler.getConnectedClient for why the previous `error` return was unsafe.
+func (h *ChatHandler) getClient(c *fiber.Ctx) (*instance.Instance, *whatsapp.Client, bool) {
 	inst := middleware.GetInstance(c)
 	if inst == nil {
-		return nil, nil, unauthorizedResponse(c)
+		_ = unauthorizedResponse(c)
+		return nil, nil, false
 	}
 	if inst.Status != instance.StatusConnected {
-		return nil, nil, invalidRequestResponse(c, "Instance is not connected.")
+		_ = invalidRequestResponse(c, "Instance is not connected.")
+		return nil, nil, false
 	}
 	client, err := h.manager.GetClient(inst.ID)
-	if err != nil {
-		return nil, nil, internalErrorResponse(c, err.Error())
+	if err != nil || client == nil {
+		msg := "client not initialized"
+		if err != nil {
+			msg = err.Error()
+		}
+		_ = internalErrorResponse(c, msg)
+		return nil, nil, false
 	}
-	return inst, client, nil
+	return inst, client, true
 }
 
 // GET /api/v1/chat - List chats
@@ -89,9 +100,9 @@ func (h *ChatHandler) GetMessages(c *fiber.Ctx) error {
 
 // POST /api/v1/chat/:jid/send - Send message from chat UI
 func (h *ChatHandler) SendMessage(c *fiber.Ctx) error {
-	inst, client, err := h.getClient(c)
-	if err != nil {
-		return err
+	inst, client, ok := h.getClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -122,9 +133,9 @@ func (h *ChatHandler) SendMessage(c *fiber.Ctx) error {
 
 // POST /api/v1/chat/:jid/upload - Send media file from upload
 func (h *ChatHandler) SendMedia(c *fiber.Ctx) error {
-	inst, client, err := h.getClient(c)
-	if err != nil {
-		return err
+	inst, client, ok := h.getClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -177,9 +188,9 @@ func (h *ChatHandler) SendMedia(c *fiber.Ctx) error {
 
 // GET /api/v1/contact/:jid - Fetch WhatsApp profile info
 func (h *ChatHandler) GetContactProfile(c *fiber.Ctx) error {
-	inst, client, err := h.getClient(c)
-	if err != nil {
-		return err
+	inst, client, ok := h.getClient(c)
+	if !ok {
+		return nil
 	}
 
 	jidStr := c.Params("jid")

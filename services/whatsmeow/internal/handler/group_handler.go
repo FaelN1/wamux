@@ -18,33 +18,48 @@ func NewGroupHandler(manager *instance.Manager) *GroupHandler {
 	return &GroupHandler{manager: manager}
 }
 
-func (h *GroupHandler) getConnectedClient(c *fiber.Ctx) (*instance.Instance, *whatsapp.Client, error) {
+// getConnectedClient resolves the instance + live client for the request, writing
+// the appropriate error response itself. The boolean return is the ONLY signal
+// callers should use to decide whether to proceed — c.JSON()/c.Status().JSON()
+// return nil on a successful write, so using that as an "error" sentinel here
+// previously let callers fall through with a nil client after an early-return
+// branch had already written a 400/401/500 response (see incident: GET
+// /community on a disconnected instance panicked with a nil pointer dereference
+// inside whatsapp.Client because the caller's `if err != nil` check never fired).
+func (h *GroupHandler) getConnectedClient(c *fiber.Ctx) (*instance.Instance, *whatsapp.Client, bool) {
 	inst := middleware.GetInstance(c)
 	if inst == nil {
-		return nil, nil, unauthorizedResponse(c)
+		_ = unauthorizedResponse(c)
+		return nil, nil, false
 	}
 
 	if inst.Status != instance.StatusConnected {
-		return nil, nil, c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+		_ = c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":   "instance_not_connected",
 			"message": "Instance is not connected to WhatsApp.",
 			"status":  400,
 		})
+		return nil, nil, false
 	}
 
 	client, err := h.manager.GetClient(inst.ID)
-	if err != nil {
-		return nil, nil, internalErrorResponse(c, err.Error())
+	if err != nil || client == nil {
+		msg := "client not initialized"
+		if err != nil {
+			msg = err.Error()
+		}
+		_ = internalErrorResponse(c, msg)
+		return nil, nil, false
 	}
 
-	return inst, client, nil
+	return inst, client, true
 }
 
 // GET /api/v1/community - List communities (cached)
 func (h *GroupHandler) ListCommunities(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	onlyAdmin := c.Query("only_admin", "false") == "true"
@@ -83,9 +98,9 @@ func (h *GroupHandler) ListCommunities(c *fiber.Ctx) error {
 
 // POST /api/v1/community/sync - Force community sync
 func (h *GroupHandler) SyncCommunities(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	client.SyncCommunities()
@@ -98,9 +113,9 @@ func (h *GroupHandler) SyncCommunities(c *fiber.Ctx) error {
 
 // POST /api/v1/community
 func (h *GroupHandler) CreateCommunity(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	var req whatsapp.CommunityRequest
@@ -123,9 +138,9 @@ func (h *GroupHandler) CreateCommunity(c *fiber.Ctx) error {
 
 // GET /api/v1/community/:jid/link
 func (h *GroupHandler) GetInviteLink(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -146,9 +161,9 @@ func (h *GroupHandler) GetInviteLink(c *fiber.Ctx) error {
 
 // DELETE /api/v1/community/:jid
 func (h *GroupHandler) DeleteCommunity(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -168,9 +183,9 @@ func (h *GroupHandler) DeleteCommunity(c *fiber.Ctx) error {
 
 // POST /api/v1/community/:jid/admins/promote
 func (h *GroupHandler) PromoteAdmins(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -196,9 +211,9 @@ func (h *GroupHandler) PromoteAdmins(c *fiber.Ctx) error {
 
 // POST /api/v1/community/:jid/admins/demote
 func (h *GroupHandler) DemoteAdmins(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -224,9 +239,9 @@ func (h *GroupHandler) DemoteAdmins(c *fiber.Ctx) error {
 
 // PUT /api/v1/community/:jid
 func (h *GroupHandler) UpdateGroupInfo(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -246,9 +261,9 @@ func (h *GroupHandler) UpdateGroupInfo(c *fiber.Ctx) error {
 
 // GET /api/v1/community/:jid/members
 func (h *GroupHandler) GetMembers(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 
 	jid := decodeParam(c, "jid")
@@ -271,9 +286,9 @@ func (h *GroupHandler) GetMembers(c *fiber.Ctx) error {
 
 // GET /api/v1/group
 func (h *GroupHandler) ListGroups(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	groups, err := client.ListGroups()
 	if err != nil {
@@ -284,9 +299,9 @@ func (h *GroupHandler) ListGroups(c *fiber.Ctx) error {
 
 // GET /api/v1/group/:jid
 func (h *GroupHandler) GetGroupInfo(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	if jid == "" {
@@ -301,9 +316,9 @@ func (h *GroupHandler) GetGroupInfo(c *fiber.Ctx) error {
 
 // POST /api/v1/group
 func (h *GroupHandler) CreateGroup(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	var req struct {
 		Subject      string   `json:"subject"`
@@ -332,9 +347,9 @@ func (h *GroupHandler) CreateGroup(c *fiber.Ctx) error {
 
 // POST /api/v1/group/:jid/participants
 func (h *GroupHandler) UpdateParticipants(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	var req struct {
@@ -356,9 +371,9 @@ func (h *GroupHandler) UpdateParticipants(c *fiber.Ctx) error {
 
 // PUT /api/v1/group/:jid/subject
 func (h *GroupHandler) SetGroupSubject(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	var req struct {
@@ -375,9 +390,9 @@ func (h *GroupHandler) SetGroupSubject(c *fiber.Ctx) error {
 
 // PUT /api/v1/group/:jid/description
 func (h *GroupHandler) SetGroupDescription(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	var req struct {
@@ -394,9 +409,9 @@ func (h *GroupHandler) SetGroupDescription(c *fiber.Ctx) error {
 
 // PUT /api/v1/group/:jid/setting
 func (h *GroupHandler) SetGroupSetting(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	var req struct {
@@ -413,9 +428,9 @@ func (h *GroupHandler) SetGroupSetting(c *fiber.Ctx) error {
 
 // GET /api/v1/group/:jid/invite
 func (h *GroupHandler) GetGroupInvite(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	link, err := client.GroupInviteLink(jid, false)
@@ -427,9 +442,9 @@ func (h *GroupHandler) GetGroupInvite(c *fiber.Ctx) error {
 
 // DELETE /api/v1/group/:jid/invite
 func (h *GroupHandler) RevokeGroupInvite(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	link, err := client.GroupInviteLink(jid, true)
@@ -441,9 +456,9 @@ func (h *GroupHandler) RevokeGroupInvite(c *fiber.Ctx) error {
 
 // POST /api/v1/group/join
 func (h *GroupHandler) JoinGroup(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	var req struct {
 		Code string `json:"code"`
@@ -464,9 +479,9 @@ func (h *GroupHandler) JoinGroup(c *fiber.Ctx) error {
 
 // POST /api/v1/group/:jid/leave
 func (h *GroupHandler) LeaveGroup(c *fiber.Ctx) error {
-	_, client, err := h.getConnectedClient(c)
-	if err != nil {
-		return err
+	_, client, ok := h.getConnectedClient(c)
+	if !ok {
+		return nil
 	}
 	jid := decodeParam(c, "jid")
 	if err := client.LeaveGroup(jid); err != nil {

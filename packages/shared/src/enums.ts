@@ -85,6 +85,11 @@ export enum WebhookEvent {
   GROUPS_UPSERT = 'groups.upsert',
   GROUPS_UPDATE = 'groups.update',
   GROUP_PARTICIPANTS_UPDATE = 'groups.participants.update',
+  // comunidades (grupo-pai + subgrupos vinculados)
+  /** metadados + lista de participantes de uma comunidade foram (re)sincronizados. */
+  COMMUNITY_PARTICIPANTS_SYNCED = 'communities.participants.synced',
+  /** o subgrupo de anúncios de uma comunidade foi identificado (resolução assíncrona). */
+  COMMUNITY_ANNOUNCEMENT_DISCOVERED = 'communities.announcement.discovered',
   // presença & chamadas
   PRESENCE_UPDATE = 'presence.update',
   CALL_RECEIVED = 'call.received',

@@ -155,6 +155,20 @@ export const WEBHOOK_EVENTS: WebhookEventMeta[] = [
     category: 'Grupos',
     evolution: 'GROUP_PARTICIPANTS_UPDATE',
   },
+  // ── Comunidades ──
+  {
+    value: WebhookEvent.COMMUNITY_PARTICIPANTS_SYNCED,
+    label: 'Participantes de comunidade sincronizados',
+    description: 'Metadados e lista de participantes de uma comunidade foram (re)sincronizados.',
+    category: 'Comunidades',
+  },
+  {
+    value: WebhookEvent.COMMUNITY_ANNOUNCEMENT_DISCOVERED,
+    label: 'Grupo de anúncios identificado',
+    description:
+      'O subgrupo de anúncios de uma comunidade foi resolvido (a descoberta é assíncrona).',
+    category: 'Comunidades',
+  },
   // ── Presença & Chamadas ──
   {
     value: WebhookEvent.PRESENCE_UPDATE,

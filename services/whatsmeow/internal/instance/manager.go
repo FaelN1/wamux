@@ -137,12 +137,17 @@ func (m *Manager) GetMsgLog() *msglog.Store {
 	return m.msgLog
 }
 
+// GetClient returns the live *whatsapp.Client for instanceID. It never returns a
+// nil client without a non-nil error — callers must still check the error, but
+// this guards against a future accidental `m.clients[id] = nil` insertion (or
+// any other bug) silently handing out a nil client that panics deep inside a
+// handler.
 func (m *Manager) GetClient(instanceID string) (*whatsapp.Client, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	client, ok := m.clients[instanceID]
-	if !ok {
+	if !ok || client == nil {
 		return nil, fmt.Errorf("client not found for instance %s", instanceID)
 	}
 	return client, nil

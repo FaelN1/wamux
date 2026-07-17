@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  NotImplementedException,
   Param,
   Post,
   Put,
@@ -200,6 +201,17 @@ export class InstanceController {
   async capabilities(@Param('id') id: string) {
     const provider = await this.manager.requireLive(id);
     return provider.capabilities;
+  }
+
+  /** Nome/foto da própria conta conectada. 501 uniforme se a engine não suportar. */
+  @Get(':id/profile')
+  @UseGuards(InstanceApiKeyGuard)
+  async profile(@Param('id') id: string) {
+    const provider = await this.manager.requireLive(id);
+    if (!provider.capabilities.profile || !provider.getProfile) {
+      throw new NotImplementedException(`A engine "${provider.type}" não suporta perfil.`);
+    }
+    return provider.getProfile();
   }
 
   /** Troca a engine (opcionalmente migrando credenciais, sem reparear). */

@@ -3,6 +3,7 @@ import { Client, GroupChat, RemoteAuth, Message, MessageMedia, Poll } from 'what
 import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import { classifyJid } from '../jid.util';
+import { mapWithConcurrency } from '../concurrency.util';
 import { PostgresRemoteStore } from './postgres-store';
 import {
   ConnectionStatus,
@@ -17,6 +18,7 @@ import {
   MessageType,
   NormalizedMessage,
   NumberCheckResult,
+  ProfileInfo,
   ProviderType,
   SendMediaInput,
   SendPollInput,
@@ -51,6 +53,7 @@ export class WebjsProvider extends BaseProvider {
     buttons: false,
     list: false,
     pix: false,
+    profile: true,
   };
 
   private client?: Client;
@@ -174,9 +177,11 @@ export class WebjsProvider extends BaseProvider {
   // ── capabilities (docs 03/04/08) ───────────────────────────
 
   async listLabels(): Promise<Label[]> {
-    const labels = await (this.requireClient() as unknown as {
-      getLabels: () => Promise<Array<{ id: string; name: string; hexColor?: string }>>;
-    }).getLabels();
+    const labels = await (
+      this.requireClient() as unknown as {
+        getLabels: () => Promise<Array<{ id: string; name: string; hexColor?: string }>>;
+      }
+    ).getLabels();
     return labels.map((l) => ({ id: l.id, name: l.name, color: { hex: l.hexColor } }));
   }
 
@@ -195,16 +200,22 @@ export class WebjsProvider extends BaseProvider {
   }
 
   async getLabelsForTarget(target: LabelTarget): Promise<Label[]> {
-    const labels = await (this.requireClient() as unknown as {
-      getChatLabels: (id: string) => Promise<Array<{ id: string; name: string; hexColor?: string }>>;
-    }).getChatLabels(this.toChatId(target.id));
+    const labels = await (
+      this.requireClient() as unknown as {
+        getChatLabels: (
+          id: string,
+        ) => Promise<Array<{ id: string; name: string; hexColor?: string }>>;
+      }
+    ).getChatLabels(this.toChatId(target.id));
     return labels.map((l) => ({ id: l.id, name: l.name, color: { hex: l.hexColor } }));
   }
 
   async getChatsForLabel(labelId: string): Promise<string[]> {
-    const chats = await (this.requireClient() as unknown as {
-      getChatsByLabelId: (id: string) => Promise<Array<{ id: { _serialized: string } }>>;
-    }).getChatsByLabelId(labelId);
+    const chats = await (
+      this.requireClient() as unknown as {
+        getChatsByLabelId: (id: string) => Promise<Array<{ id: { _serialized: string } }>>;
+      }
+    ).getChatsByLabelId(labelId);
     return chats.map((c) => c.id._serialized);
   }
 
@@ -262,11 +273,15 @@ export class WebjsProvider extends BaseProvider {
 
   async listGroups(): Promise<GroupInfo[]> {
     const chats = await this.requireClient().getChats();
-    return chats.filter((c) => c.isGroup).map((c) => this.toGroup(c as GroupChat));
+    const all = chats.filter((c) => c.isGroup).map((c) => this.toGroup(c as GroupChat));
+    await this.attachPictureUrls(all);
+    return all;
   }
 
   async groupMetadata(jid: string): Promise<GroupInfo> {
-    return this.toGroup(await this.getGroupChat(jid));
+    const info = this.toGroup(await this.getGroupChat(jid));
+    info.pictureUrl = await this.fetchPictureUrl(info.jid);
+    return info;
   }
 
   async createGroup(input: CreateGroupInput): Promise<GroupInfo> {
@@ -294,9 +309,9 @@ export class WebjsProvider extends BaseProvider {
       case 'add': {
         const res = await chat.addParticipants(participants);
         if (res && typeof res === 'object') {
-          return Object.entries(
-            res as Record<string, { code?: number; statusCode?: number }>,
-          ).map(([id, r]) => ({ jid: id, status: String(r?.code ?? r?.statusCode ?? 200) }));
+          return Object.entries(res as Record<string, { code?: number; statusCode?: number }>).map(
+            ([id, r]) => ({ jid: id, status: String(r?.code ?? r?.statusCode ?? 200) }),
+          );
         }
         return participants.map((p) => ({ jid: p, status: '200' }));
       }
@@ -380,7 +395,12 @@ export class WebjsProvider extends BaseProvider {
     // traz desc/announce/restrict/creation que a interface GroupChat omite.
     const meta = (
       chat as unknown as {
-        groupMetadata?: { desc?: string; announce?: boolean; restrict?: boolean; creation?: number };
+        groupMetadata?: {
+          desc?: string;
+          announce?: boolean;
+          restrict?: boolean;
+          creation?: number;
+        };
       }
     ).groupMetadata;
     const participants = chat.participants ?? [];
@@ -398,6 +418,40 @@ export class WebjsProvider extends BaseProvider {
       restrict: meta?.restrict,
       creation: meta?.creation,
     };
+  }
+
+  /** `client.info` só existe depois de `ready` — sem fallback exótico, é a mesma
+   * garantia que o resto do adapter já assume (`requireClient`). */
+  async getProfile(): Promise<ProfileInfo> {
+    const client = this.requireClient();
+    const jid = client.info?.wid?._serialized ?? '';
+    const name = client.info?.pushname || undefined;
+    const profilePicUrl = await this.fetchPictureUrl(jid);
+    return { jid, name, profilePicUrl };
+  }
+
+  /**
+   * `client.getProfilePicUrl(id)` funciona pra QUALQUER id — contato ou
+   * grupo (mesmo mecanismo de `getProfile`, só muda o id). Sem foto definida
+   * (ou privacidade restringindo) não é erro — devolve `undefined`.
+   */
+  private async fetchPictureUrl(jid: string): Promise<string | undefined> {
+    if (!jid) return undefined;
+    try {
+      return await this.requireClient().getProfilePicUrl(jid);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Concorrência limitada — ver `BaileysProvider.attachPictureUrls` pro motivo. */
+  private async attachPictureUrls(
+    items: Array<{ jid: string; pictureUrl?: string }>,
+  ): Promise<void> {
+    const urls = await mapWithConcurrency(items, 6, (item) => this.fetchPictureUrl(item.jid));
+    items.forEach((item, i) => {
+      item.pictureUrl = urls[i];
+    });
   }
 
   private requireClient(): Client {

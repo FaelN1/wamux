@@ -20,6 +20,7 @@ import { LabelsModule } from './labels/labels.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
 import { GroupsModule } from './groups/groups.module';
+import { CommunitiesModule } from './communities/communities.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
@@ -76,6 +77,7 @@ import { HealthModule } from './health/health.module';
     ContactsModule,
     NewsletterModule,
     GroupsModule,
+    CommunitiesModule,
     HistoryModule,
     StatsModule,
     HealthModule,

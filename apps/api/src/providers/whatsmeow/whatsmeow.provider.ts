@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
+import { mapWithConcurrency } from '../concurrency.util';
 import {
   ConnectionStatus,
   CreateGroupInput,
@@ -8,6 +9,14 @@ import {
   GroupParticipantAction,
   GroupParticipantResult,
   GroupSetting,
+  CommunityInfo,
+  CreateCommunityInput,
+  CommunityAdminAction,
+  CommunityLinkedGroup,
+  CommunityParticipant,
+  CommunityInviteProbeResult,
+  UpdateCommunityImageInput,
+  ProfileInfo,
   Label,
   LabelTarget,
   MessageAckStatus,
@@ -19,6 +28,7 @@ import {
   SendResult,
   SendTextInput,
   UpsertLabelInput,
+  WebhookEvent,
 } from '../provider.types';
 
 /**
@@ -53,8 +63,15 @@ export class WhatsmeowProvider extends BaseProvider {
 
   readonly portableCredentials = true;
 
-  /** whatsmeow entrega grupos e etiquetas via sidecar Go; o resto é 501 uniforme. */
-  readonly capabilities = { groups: true, labels: true };
+  /**
+   * whatsmeow entrega grupos, etiquetas e comunidades via sidecar Go; o resto
+   * é 501 uniforme. Comunidades têm CRUD nativo no sidecar
+   * (`internal/whatsapp/client.go`), mas com algumas lacunas pontuais em
+   * relação ao contrato canônico — os métodos afetados lançam erro explícito
+   * em vez de fingir suporte (ver comentários em cada um e
+   * `docs/community-contract-handoff.md`).
+   */
+  readonly capabilities = { groups: true, labels: true, communities: true, profile: true };
 
   async initialize(): Promise<void> {
     await this.ensureProvisioned();
@@ -175,7 +192,7 @@ export class WhatsmeowProvider extends BaseProvider {
       company_name: companyName,
       side_name: sideName,
       webhook_url: webhookUrl,
-      webhook_events: ['MESSAGE', 'CONNECTION_STATUS', 'MESSAGE_STATUS'],
+      webhook_events: ['MESSAGE', 'CONNECTION_STATUS', 'MESSAGE_STATUS', 'GROUP_MEMBERS_EDIT'],
       proxy_url: this.str('proxyUrl'),
       phone_number: this.str('phoneNumber'),
     });
@@ -335,6 +352,14 @@ export class WhatsmeowProvider extends BaseProvider {
       case 'MESSAGE_STATUS':
         this.emitStatuses(evt.data as GoStatusData);
         break;
+      case 'GROUP_MEMBERS_EDIT': {
+        // Grupos e subgrupos de comunidade compartilham o mesmo evento no sidecar —
+        // repassa como o webhook canônico "groups.participants.update" (mesmo que
+        // o Baileys já emite via socket).
+        const edit = evt.data as GoGroupMembersEditData | undefined;
+        if (edit) this.emitWebhook(WebhookEvent.GROUP_PARTICIPANTS_UPDATE, edit);
+        break;
+      }
       default:
         break;
     }
@@ -353,7 +378,9 @@ export class WhatsmeowProvider extends BaseProvider {
     try {
       await this.ensureProvisioned();
       const res = await this.client().get('/group');
-      return res.data as GroupInfo[];
+      const all = res.data as GroupInfo[];
+      await this.attachPictureUrls(all);
+      return all;
     } catch (e) {
       throw new Error(this.goError(e));
     }
@@ -363,7 +390,9 @@ export class WhatsmeowProvider extends BaseProvider {
     try {
       await this.ensureProvisioned();
       const res = await this.client().get(`/group/${encodeURIComponent(jid)}`);
-      return res.data as GroupInfo;
+      const info = res.data as GroupInfo;
+      info.pictureUrl = await this.fetchPictureUrl(info.jid);
+      return info;
     } catch (e) {
       throw new Error(this.goError(e));
     }
@@ -464,6 +493,458 @@ export class WhatsmeowProvider extends BaseProvider {
     } catch (e) {
       throw new Error(this.goError(e));
     }
+  }
+
+  // ── comunidades (via sidecar Go) ──────────────────────
+  // O sidecar já tem CRUD nativo de comunidade (`internal/whatsapp/client.go` +
+  // rotas `/community` em `cmd/server/main.go`) — este adapter é um
+  // pass-through fino, igual grupos/etiquetas. Lacunas pontuais do sidecar
+  // (sem endpoint de 1 comunidade só, sem revoke de convite, sem link/unlink
+  // avulso, foto só por URL) ficam documentadas método a método abaixo e em
+  // `docs/community-contract-handoff.md`.
+
+  /**
+   * O sidecar já suporta `only_admin` nativamente em `GET /community`
+   * (calcula admin/owner com o mapeamento PN↔LID dele mesmo — mais confiável
+   * que reimplementar aqui) — só repassamos o parâmetro.
+   */
+  /** Busca crua, sem `pictureUrl` — usada tanto por `listCommunities` (que anexa
+   * foto em lote) quanto por `communityMetadata` (que só precisa de 1 foto,
+   * não das N da listagem inteira). */
+  private async fetchCommunitiesRaw(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]> {
+    await this.ensureProvisioned();
+    const res = await this.client().get('/community', {
+      params: { include_members: true, only_admin: onlyOwnedOrAdmin || undefined },
+    });
+    const list = (res.data?.communities ?? []) as GoCommunityListItem[];
+    return list.map((c) => this.toCommunity(c));
+  }
+
+  async listCommunities(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]> {
+    try {
+      const all = await this.fetchCommunitiesRaw(onlyOwnedOrAdmin);
+      await this.attachPictureUrls(all);
+      return all;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * O sidecar não tem `GET /community/:jid` — só listagem em lote (cacheada).
+   * Emulamos via `fetchCommunitiesRaw` (sem filtro, sem foto em lote) + filtro
+   * local, e resolvemos o subgrupo de anúncios/"Geral" + a própria foto com
+   * uma chamada extra cada (paralelas).
+   */
+  async communityMetadata(jid: string): Promise<CommunityInfo> {
+    try {
+      const all = await this.fetchCommunitiesRaw();
+      const found = all.find((c) => c.jid === jid);
+      if (!found) throw new Error(`comunidade ${jid} não encontrada (ver GET /community)`);
+      const [linked, pictureUrl] = await Promise.all([
+        this.listCommunityLinkedGroups(jid).catch(() => [] as CommunityLinkedGroup[]),
+        this.fetchPictureUrl(jid),
+      ]);
+      found.announcementGroupJid = linked.find((g) => g.isAnnounce)?.jid;
+      found.defaultGroupJid = linked.find((g) => !g.isAnnounce)?.jid;
+      found.pictureUrl = pictureUrl;
+      return found;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async createCommunity(input: CreateCommunityInput): Promise<CommunityInfo> {
+    try {
+      await this.ensureProvisioned();
+      // CommunityRequest do sidecar não tem participants/picture/removeDefaultGroup —
+      // só `group_names` (subgrupos vazios criados junto). Pedimos 1 subgrupo
+      // "Geral" quando há participantes iniciais, e povoamos/removemos depois
+      // reaproveitando os métodos de grupo já existentes neste adapter.
+      const wantsDefaultGroup = Boolean(input.participants?.length);
+      const res = await this.client().post('/community', {
+        name: input.subject,
+        description: input.description ?? '',
+        group_names: wantsDefaultGroup ? ['Geral'] : [],
+      });
+      const created = res.data as GoCreateCommunityResponse;
+      const jid = created.community_jid;
+      const defaultGroupJid = created.group_jids?.[0];
+
+      if (input.picture) {
+        try {
+          await this.updateCommunityImage(jid, this.pictureToImageInput(input.picture));
+        } catch (err) {
+          this.logger.warn(
+            `whatsmeow: falha ao definir imagem da comunidade ${jid}: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      const removeDefault = input.removeDefaultGroup || input.deleteDefaultGroupChat;
+      if (defaultGroupJid && input.participants?.length) {
+        try {
+          await this.updateGroupParticipants(defaultGroupJid, input.participants, 'add');
+        } catch (err) {
+          this.logger.warn(
+            `whatsmeow: falha ao adicionar participantes iniciais na comunidade ${jid}: ${(err as Error).message}`,
+          );
+        }
+      }
+      if (defaultGroupJid && removeDefault) {
+        try {
+          // Mesma limitação de protocolo do Baileys: só dá pra sair, não apagar.
+          await this.leaveGroup(defaultGroupJid);
+        } catch (err) {
+          this.logger.warn(
+            `whatsmeow: falha ao sair do grupo padrão da comunidade ${jid}: ${(err as Error).message}`,
+          );
+        }
+      }
+
+      const info = await this.communityMetadata(jid);
+      this.emitParticipantsSynced(info);
+      if (info.announcementGroupJid)
+        this.emitAnnouncementDiscovered(jid, info.announcementGroupJid);
+      return info;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * `DELETE /community/:jid` chama `DeleteCommunityFull` no sidecar, que
+   * desvincula+sai de cada subgrupo e sai da comunidade — mesma aproximação
+   * do Baileys (WhatsApp não expõe "apagar para todos" nem para o whatsmeow).
+   */
+  async deleteCommunity(jid: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().delete(`/community/${encodeURIComponent(jid)}`);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateCommunitySubject(jid: string, subject: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/community/${encodeURIComponent(jid)}`, { name: subject });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async updateCommunityDescription(jid: string, description: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/community/${encodeURIComponent(jid)}`, { description });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /** O sidecar só aceita `photo_url` (baixa o JPEG por HTTP) — base64 não é suportado. */
+  async updateCommunityImage(jid: string, image: UpdateCommunityImageInput): Promise<void> {
+    if (!image.url) {
+      throw new Error(
+        'whatsmeow (sidecar Go): imagem de comunidade só aceita "url" pública — base64 não é suportado por este endpoint.',
+      );
+    }
+    try {
+      await this.ensureProvisioned();
+      await this.client().put(`/community/${encodeURIComponent(jid)}`, { photo_url: image.url });
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * O sidecar não retorna status por participante (uma falha aborta o lote
+   * inteiro) — sintetiza 200 pra todos após sucesso, refletindo a semântica
+   * real "tudo ou nada" da chamada.
+   */
+  async updateCommunityAdmins(
+    jid: string,
+    members: string[],
+    action: CommunityAdminAction,
+  ): Promise<GroupParticipantResult[]> {
+    try {
+      await this.ensureProvisioned();
+      const jids = members.map((m) => this.toJid(m));
+      await this.client().post(`/community/${encodeURIComponent(jid)}/admins/${action}`, {
+        participants: jids,
+      });
+      return jids.map((j) => ({ jid: j, status: '200' }));
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async listCommunityMembers(jid: string): Promise<CommunityParticipant[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/community/${encodeURIComponent(jid)}/members`);
+      const members = (res.data?.members ?? []) as GoMember[];
+      return members.map((m) => this.toParticipant(m));
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async countCommunityMembers(jid: string): Promise<number> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/community/${encodeURIComponent(jid)}/members`);
+      return (res.data?.total as number) ?? 0;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * O sidecar não expõe um convite único "da comunidade" — `GetInviteLink`
+   * retorna um link por SUBGRUPO. Aproximamos escolhendo o link do subgrupo
+   * de anúncios (ou o primeiro disponível) — ver limitação documentada.
+   */
+  async getCommunityInviteCode(jid: string): Promise<string> {
+    const links = await this.fetchInviteLinks(jid);
+    const preferred = await this.pickAnnouncementLink(jid, links);
+    return preferred?.link ? this.codeFromLink(preferred.link) : '';
+  }
+
+  /**
+   * Sem equivalente no sidecar: `GetInviteLink` não aceita `reset` para
+   * comunidades (só para grupos avulsos, via outro método). Lança em vez de
+   * fingir sucesso.
+   */
+  async revokeCommunityInviteCode(_jid: string): Promise<string> {
+    throw new Error(
+      'whatsmeow (sidecar Go): revogar/rotacionar convite de comunidade ainda não é suportado — GetInviteLink não expõe "reset" para comunidades.',
+    );
+  }
+
+  async probeCommunityInvite(jid: string): Promise<CommunityInviteProbeResult> {
+    try {
+      const links = await this.fetchInviteLinks(jid);
+      return { reachable: links.length > 0 };
+    } catch {
+      return { reachable: false };
+    }
+  }
+
+  async listCommunityLinkedGroups(jid: string): Promise<CommunityLinkedGroup[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get('/community', { params: { include_members: false } });
+      const list = (res.data?.communities ?? []) as GoCommunityListItem[];
+      const found = list.find((c) => c.jid === jid);
+      const subJids = found?.sub_groups ?? [];
+      return Promise.all(
+        subJids.map(async (sgJid) => {
+          const g = await this.groupMetadata(sgJid).catch(() => null);
+          return {
+            jid: sgJid,
+            subject: g?.subject ?? '',
+            isAnnounce: g?.announce ?? false,
+            size: g?.size,
+          };
+        }),
+      );
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * Sem equivalente no sidecar: não há rota para vincular um grupo JÁ
+   * EXISTENTE a uma comunidade — só criar subgrupos novos junto na criação
+   * (`participants`/`group_names` em `createCommunity`).
+   */
+  async linkGroupToCommunity(_groupJid: string, _communityJid: string): Promise<void> {
+    throw new Error(
+      'whatsmeow (sidecar Go): vincular um grupo existente a uma comunidade ainda não é suportado (sem rota /community/:jid/groups).',
+    );
+  }
+
+  /**
+   * Sem equivalente no sidecar: o desvínculo de subgrupo só acontece como
+   * parte de `DELETE /community/:jid` (que também sai do subgrupo).
+   */
+  async unlinkGroupFromCommunity(_groupJid: string, _communityJid: string): Promise<void> {
+    throw new Error(
+      'whatsmeow (sidecar Go): desvincular um subgrupo isoladamente ainda não é suportado — só junto com a exclusão da comunidade.',
+    );
+  }
+
+  /**
+   * O sync do sidecar é POR INSTÂNCIA (não dá pra mirar 1 comunidade só) e é
+   * assíncrono — dispara o resync e faz poucas tentativas até a comunidade
+   * aparecer atualizada na listagem.
+   */
+  async syncCommunity(jid: string): Promise<CommunityInfo> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().post('/community/sync');
+      const info = await this.pollForCommunity(jid);
+      this.emitParticipantsSynced(info);
+      if (info.announcementGroupJid)
+        this.emitAnnouncementDiscovered(jid, info.announcementGroupJid);
+      return info;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async syncAllCommunities(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().post('/community/sync');
+      await new Promise((r) => setTimeout(r, 1500));
+      const all = await this.listCommunities(onlyOwnedOrAdmin);
+      for (const info of all) this.emitParticipantsSynced(info);
+      return all;
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  private async fetchInviteLinks(jid: string): Promise<GoInviteLinkResult[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/community/${encodeURIComponent(jid)}/link`);
+      return (res.data?.links ?? []) as GoInviteLinkResult[];
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  private async pickAnnouncementLink(
+    jid: string,
+    links: GoInviteLinkResult[],
+  ): Promise<GoInviteLinkResult | undefined> {
+    if (links.length <= 1) return links[0];
+    const linked = await this.listCommunityLinkedGroups(jid).catch(
+      () => [] as CommunityLinkedGroup[],
+    );
+    const announceJid = linked.find((g) => g.isAnnounce)?.jid;
+    return links.find((l) => l.jid === announceJid) ?? links[0];
+  }
+
+  private codeFromLink(link: string): string {
+    return link.replace(/^https?:\/\/chat\.whatsapp\.com\//, '');
+  }
+
+  private async pollForCommunity(jid: string, attempts = 3, delayMs = 700): Promise<CommunityInfo> {
+    for (let i = 0; i < attempts; i += 1) {
+      if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
+      try {
+        return await this.communityMetadata(jid);
+      } catch {
+        continue;
+      }
+    }
+    throw new Error(`comunidade ${jid} não apareceu no resync (tente novamente)`);
+  }
+
+  private pictureToImageInput(picture: string): UpdateCommunityImageInput {
+    if (picture.startsWith('http://') || picture.startsWith('https://')) return { url: picture };
+    return { base64: picture };
+  }
+
+  private toParticipant(m: GoMember): CommunityParticipant {
+    return { id: m.jid, role: m.is_owner ? 'superadmin' : m.is_admin ? 'admin' : 'member' };
+  }
+
+  private toCommunity(c: GoCommunityListItem): CommunityInfo {
+    return {
+      jid: c.jid,
+      subject: c.name,
+      description: c.description || undefined,
+      owner: c.owner_jid || undefined,
+      participants: (c.members ?? []).map((m) => this.toParticipant(m)),
+      size: c.member_count,
+    };
+  }
+
+  private emitParticipantsSynced(info: CommunityInfo): void {
+    this.emitWebhook(WebhookEvent.COMMUNITY_PARTICIPANTS_SYNCED, {
+      communityJid: info.jid,
+      name: info.subject,
+      description: info.description,
+      ownerJid: info.owner,
+      announcementJid: info.announcementGroupJid,
+      defaultSubgroupJid: info.defaultGroupJid,
+      participants: info.participants.map((p) => ({
+        jid: p.id,
+        isAdmin: p.role === 'admin' || p.role === 'superadmin',
+        isOwner: Boolean(info.owner) && p.id === info.owner,
+      })),
+    });
+  }
+
+  private emitAnnouncementDiscovered(communityJid: string, announcementGroupJid: string): void {
+    this.emitWebhook(WebhookEvent.COMMUNITY_ANNOUNCEMENT_DISCOVERED, {
+      communityJid,
+      announcementGroupJid,
+    });
+  }
+
+  // ── perfil (via sidecar Go) ───────────────────────────
+  // `GET /profile` já existe no sidecar (`internal/handler/profile_handler.go`
+  // → `Client.GetProfile()`): pushName do store, status via `GetUserInfo`, foto
+  // via `GetProfilePictureInfo`. Pass-through direto, sem lógica extra aqui.
+
+  async getProfile(): Promise<ProfileInfo> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get('/profile');
+      const d = res.data as {
+        jid?: string;
+        name?: string;
+        status?: string;
+        picture_url?: string;
+      };
+      return {
+        jid: d.jid ?? '',
+        name: d.name || undefined,
+        status: d.status || undefined,
+        profilePicUrl: d.picture_url || undefined,
+      };
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  /**
+   * `GET /contact/:jid` no sidecar chama `GetProfilePictureInfo` pra
+   * QUALQUER jid — usuário, grupo ou comunidade (mesmo mecanismo de
+   * `GET /profile`, só muda o jid) — reaproveitado aqui em vez de expor um
+   * endpoint novo. Nota: como efeito colateral esse handler também faz
+   * upsert de um "contact" no chat-store do sidecar pro jid consultado
+   * (mesmo sendo um grupo/comunidade) — inofensivo pro gateway, mas vale
+   * saber se aparecer um "contato" estranho no painel do sidecar.
+   */
+  private async fetchPictureUrl(jid: string): Promise<string | undefined> {
+    if (!jid) return undefined;
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/contact/${encodeURIComponent(jid)}`);
+      const url = (res.data as { picture_url?: string })?.picture_url;
+      return url || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Concorrência limitada — ver `BaileysProvider.attachPictureUrls` pro motivo. */
+  private async attachPictureUrls(
+    items: Array<{ jid: string; pictureUrl?: string }>,
+  ): Promise<void> {
+    const urls = await mapWithConcurrency(items, 6, (item) => this.fetchPictureUrl(item.jid));
+    items.forEach((item, i) => {
+      item.pictureUrl = urls[i];
+    });
   }
 
   // ── etiquetas (via sidecar Go) ───────────────────────
@@ -660,4 +1141,35 @@ interface GoStatusData {
   chat?: string;
   status: string;
   timestamp?: number;
+}
+interface GoGroupMembersEditData {
+  group_jid: string;
+  action: string;
+  participants: string[];
+  actor?: string;
+}
+interface GoMember {
+  jid: string;
+  is_admin: boolean;
+  is_owner?: boolean;
+}
+interface GoCommunityListItem {
+  jid: string;
+  name: string;
+  description?: string;
+  owner_jid: string;
+  is_admin: boolean;
+  is_owner: boolean;
+  member_count: number;
+  sub_groups?: string[];
+  members?: GoMember[];
+}
+interface GoCreateCommunityResponse {
+  community_jid: string;
+  group_jids?: string[];
+}
+interface GoInviteLinkResult {
+  jid: string;
+  name: string;
+  link: string;
 }

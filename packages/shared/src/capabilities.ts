@@ -26,6 +26,10 @@ export interface ProviderCapabilities {
   newsletter?: boolean;
   /** gerência de grupos (criar, participantes, admins, assunto, convite). */
   groups?: boolean;
+  /** gerência de comunidades (grupo-pai + subgrupos vinculados). */
+  communities?: boolean;
+  /** perfil da própria conta conectada (nome/foto). */
+  profile?: boolean;
   /** history sync (import de histórico). */
   history?: boolean;
   // ── interativos — granular por tipo ──

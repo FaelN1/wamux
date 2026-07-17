@@ -20,6 +20,14 @@ import {
   GroupParticipantAction,
   GroupParticipantResult,
   GroupSetting,
+  CommunityInfo,
+  CreateCommunityInput,
+  CommunityAdminAction,
+  CommunityLinkedGroup,
+  CommunityParticipant,
+  CommunityInviteProbeResult,
+  UpdateCommunityImageInput,
+  ProfileInfo,
   NormalizedMessage,
   NumberCheckResult,
   PollResults,
@@ -230,6 +238,43 @@ export interface WhatsAppProvider {
   joinGroupViaInvite?(code: string): Promise<{ jid: string }>;
   leaveGroup?(jid: string): Promise<void>;
 
+  // ── comunidades (gated por capabilities.communities) ─
+  /** `onlyOwnedOrAdmin` filtra pra só as comunidades onde a própria conta é admin/superadmin. */
+  listCommunities?(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]>;
+  communityMetadata?(jid: string): Promise<CommunityInfo>;
+  createCommunity?(input: CreateCommunityInput): Promise<CommunityInfo>;
+  /**
+   * Nem toda engine expõe "apagar para todos" via protocolo — quando não
+   * suportado, o adapter documenta a aproximação (ex.: Baileys só sai — ver
+   * `BaileysProvider.deleteCommunity`).
+   */
+  deleteCommunity?(jid: string): Promise<void>;
+  updateCommunitySubject?(jid: string, subject: string): Promise<void>;
+  updateCommunityDescription?(jid: string, description: string): Promise<void>;
+  updateCommunityImage?(jid: string, image: UpdateCommunityImageInput): Promise<void>;
+  updateCommunityAdmins?(
+    jid: string,
+    members: string[],
+    action: CommunityAdminAction,
+  ): Promise<GroupParticipantResult[]>;
+  listCommunityMembers?(jid: string): Promise<CommunityParticipant[]>;
+  countCommunityMembers?(jid: string): Promise<number>;
+  getCommunityInviteCode?(jid: string): Promise<string>;
+  revokeCommunityInviteCode?(jid: string): Promise<string>;
+  /** Sonda o convite sem expor o código (liveness/anti-ban) — ver `probeCommunityInvite` no serviço. */
+  probeCommunityInvite?(jid: string): Promise<CommunityInviteProbeResult>;
+  listCommunityLinkedGroups?(jid: string): Promise<CommunityLinkedGroup[]>;
+  linkGroupToCommunity?(groupJid: string, communityJid: string): Promise<void>;
+  unlinkGroupFromCommunity?(groupJid: string, communityJid: string): Promise<void>;
+  /** Reconsulta metadados/participantes de UMA comunidade e re-emite os eventos de sync. */
+  syncCommunity?(jid: string): Promise<CommunityInfo>;
+  /** Reconsulta TODAS as comunidades de que a conta participa (mesmo filtro `onlyOwnedOrAdmin`). */
+  syncAllCommunities?(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]>;
+
+  // ── perfil (gated por capabilities.profile) ────────
+  /** Nome/foto da própria conta conectada nesta instância. */
+  getProfile?(): Promise<ProfileInfo>;
+
   // ── histórico (gated por capabilities.history) ─────
   /**
    * Solicita sincronização de histórico sob demanda. Resolve quando a REQUISIÇÃO
@@ -331,10 +376,7 @@ export abstract class BaseProvider extends EventEmitter implements WhatsAppProvi
   }
 
   /** No-op por padrão: só Cloud API e whatsmeow sobrescrevem. */
-  async handleInboundWebhook(
-    _payload: unknown,
-    _meta?: Record<string, unknown>,
-  ): Promise<void> {
+  async handleInboundWebhook(_payload: unknown, _meta?: Record<string, unknown>): Promise<void> {
     /* providers com socket próprio não recebem por webhook */
   }
 

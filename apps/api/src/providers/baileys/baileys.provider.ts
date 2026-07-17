@@ -5,6 +5,7 @@ import type { AnyMessageContent, WAMessage, WASocket } from 'baileys';
 import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext, QrPayload } from '../provider.interface';
 import { classifyJid } from '../jid.util';
+import { mapWithConcurrency } from '../concurrency.util';
 import {
   ConnectionStatus,
   CreateNewsletterInput,
@@ -13,6 +14,14 @@ import {
   GroupParticipantAction,
   GroupParticipantResult,
   GroupSetting,
+  CommunityInfo,
+  CreateCommunityInput,
+  CommunityAdminAction,
+  CommunityLinkedGroup,
+  CommunityParticipant,
+  CommunityInviteProbeResult,
+  UpdateCommunityImageInput,
+  ProfileInfo,
   HistoryCursor,
   Label,
   LabelTarget,
@@ -38,11 +47,7 @@ import {
   UpsertLabelInput,
   WebhookEvent,
 } from '../provider.types';
-import {
-  exportBaileysCreds,
-  importBaileysCreds,
-  usePostgresAuthState,
-} from './baileys-auth-state';
+import { exportBaileysCreds, importBaileysCreds, usePostgresAuthState } from './baileys-auth-state';
 import { loadBaileys, type BaileysModule } from './baileys-runtime';
 
 /** Esconde user:senha na URL do proxy para não vazar credenciais no log. */
@@ -69,6 +74,8 @@ export class BaileysProvider extends BaseProvider {
     media: true,
     newsletter: true,
     groups: true,
+    communities: true,
+    profile: true,
     history: true,
     poll: true,
     pollResults: true,
@@ -87,6 +94,8 @@ export class BaileysProvider extends BaseProvider {
   private qrAttempts = 0;
   private readonly maxQrAttempts = Number(this.config.maxQrAttempts) || 5;
   private readonly qrTtlMs = Number(this.config.qrTtlMs) || 60_000;
+  /** Sequência de invocações de `connection.update` — descarta status obsoleto (ver registerHandlers). */
+  private connectionSeq = 0;
 
   // Stores locais alimentados por evento.
   private readonly labelStore = new Map<string, Label>(); // labelId → Label
@@ -152,6 +161,16 @@ export class BaileysProvider extends BaseProvider {
     if (!this.sock) return;
 
     this.sock.ev.on('connection.update', async (update) => {
+      // `on('connection.update', async …)` registra UM listener, mas cada
+      // emissão dispara uma invocação independente — Node NÃO serializa
+      // invocações concorrentes do mesmo listener async entre emits. Sem essa
+      // guarda, um evento de `qr` que ainda está no `await QRCode.toDataURL`
+      // pode resolver DEPOIS de um `connection: 'open'` já ter chegado (ex.:
+      // scan quase simultâneo a um refresh de QR) e sobrescrever o status de
+      // volta pra "qr" mesmo já conectado (o `wid` fica certo — só o `open`
+      // o seta — mas o status regride). O contador de sequência descarta
+      // qualquer atualização de QR cuja invocação ficou obsoleta.
+      const seq = ++this.connectionSeq;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -169,6 +188,7 @@ export class BaileysProvider extends BaseProvider {
           return;
         }
         const qrImage = await QRCode.toDataURL(qr);
+        if (seq !== this.connectionSeq) return; // evento mais novo já processado — descarta o obsoleto
         const expiresAt = Date.now() + this.qrTtlMs;
         this.lastQr = { qr, qrImage, qrAttempts: this.qrAttempts, expiresAt };
         this.setStatus(ConnectionStatus.QR, {
@@ -236,7 +256,8 @@ export class BaileysProvider extends BaseProvider {
       for (const u of updates) {
         // Voto de enquete: pollUpdates sobre a enquete original guardada.
         const pollUpdates = (u as { pollUpdates?: unknown[] }).pollUpdates;
-        if (pollUpdates?.length && u.key?.id) this.handlePollVote(u.key.id, u.key.remoteJid ?? '', pollUpdates);
+        if (pollUpdates?.length && u.key?.id)
+          this.handlePollVote(u.key.id, u.key.remoteJid ?? '', pollUpdates);
 
         const status = u.update?.status;
         if (status == null || !u.key?.id || !u.key?.remoteJid) continue;
@@ -284,7 +305,9 @@ export class BaileysProvider extends BaseProvider {
 
     // Cauda longa — repassa o payload cru do Baileys pro webhook (o cliente
     // recebe o dado nativo). Cada um é opt-in pelo filtro de eventos.
-    this.sock.ev.on('messages.delete', (item) => this.emitWebhook(WebhookEvent.MESSAGE_DELETED, item));
+    this.sock.ev.on('messages.delete', (item) =>
+      this.emitWebhook(WebhookEvent.MESSAGE_DELETED, item),
+    );
     this.sock.ev.on('chats.upsert', (c) => this.emitWebhook(WebhookEvent.CHATS_UPSERT, c));
     this.sock.ev.on('chats.update', (c) => this.emitWebhook(WebhookEvent.CHATS_UPDATE, c));
     this.sock.ev.on('chats.delete', (c) => this.emitWebhook(WebhookEvent.CHATS_DELETE, c));
@@ -367,7 +390,7 @@ export class BaileysProvider extends BaseProvider {
         // asPtt → mensagem de voz.
         content = {
           audio: source,
-          mimetype: input.asPtt ? 'audio/ogg; codecs=opus' : input.mimetype ?? 'audio/mp4',
+          mimetype: input.asPtt ? 'audio/ogg; codecs=opus' : (input.mimetype ?? 'audio/mp4'),
           ...(input.asPtt ? { ptt: true } : {}),
         } as unknown as AnyMessageContent;
         break;
@@ -380,7 +403,10 @@ export class BaileysProvider extends BaseProvider {
         };
         break;
       case 'sticker':
-        content = { sticker: source, ...(input.animated ? { isAnimated: true } : {}) } as unknown as AnyMessageContent;
+        content = {
+          sticker: source,
+          ...(input.animated ? { isAnimated: true } : {}),
+        } as unknown as AnyMessageContent;
         break;
       default:
         throw new Error(`Tipo de mídia não suportado: ${input.type as string}`);
@@ -434,6 +460,57 @@ export class BaileysProvider extends BaseProvider {
     return { code };
   }
 
+  // ── perfil ────────────────────────────────────────
+
+  /**
+   * `sock.user` (getter sobre `authState.creds.me`, tipo `Contact`) traz a
+   * identidade da própria conta — `.name` é o campo populado no pair-success
+   * (ver `Utils/validate-connection.js`), com `.verifiedName`/`.notify` como
+   * fallback pra contas em que `.name` não vem preenchido. `status` (recado)
+   * não é buscado aqui — a lib não expõe isso de graça pro próprio número, só
+   * via query USync mais elaborada; deixado de fora por ora.
+   */
+  async getProfile(): Promise<ProfileInfo> {
+    const jid = this.sock?.user?.id ?? '';
+    const name =
+      this.sock?.user?.name ||
+      this.sock?.user?.verifiedName ||
+      this.sock?.user?.notify ||
+      undefined;
+    const profilePicUrl = await this.fetchPictureUrl(jid);
+    return { jid, name, profilePicUrl };
+  }
+
+  /**
+   * `sock.profilePictureUrl(jid, type)` funciona pra QUALQUER jid — usuário,
+   * grupo ou comunidade (mesmo mecanismo de `getProfile`, só muda o jid).
+   * Sem foto definida (ou privacidade restringindo) não é erro — devolve
+   * `undefined` em vez de propagar.
+   */
+  private async fetchPictureUrl(jid: string): Promise<string | undefined> {
+    if (!jid) return undefined;
+    try {
+      return await this.socket().profilePictureUrl(jid, 'image');
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Popula `pictureUrl` numa listagem inteira com concorrência limitada — N
+   * chamadas seriais seria lento demais pra contas com dezenas de grupos, mas
+   * N chamadas simultâneas é uma rajada arriscada (rate-limit/anti-ban) contra
+   * a mesma sessão. 6 em paralelo é um meio-termo conservador.
+   */
+  private async attachPictureUrls(
+    items: Array<{ jid: string; pictureUrl?: string }>,
+  ): Promise<void> {
+    const urls = await mapWithConcurrency(items, 6, (item) => this.fetchPictureUrl(item.jid));
+    items.forEach((item, i) => {
+      item.pictureUrl = urls[i];
+    });
+  }
+
   // ── etiquetas ─────────────────────────────────────
 
   /**
@@ -465,7 +542,11 @@ export class BaileysProvider extends BaseProvider {
 
   async upsertLabel(input: UpsertLabelInput): Promise<Label> {
     const sock = this.socket() as WASocket & {
-      addOrEditLabel?: (l: { id?: string; name: string; color?: number }) => Promise<{ id: string }>;
+      addOrEditLabel?: (l: {
+        id?: string;
+        name: string;
+        color?: number;
+      }) => Promise<{ id: string }>;
     };
     if (!sock.addOrEditLabel) throw new Error('build do Baileys sem addOrEditLabel');
     const res = await sock.addOrEditLabel({
@@ -473,7 +554,12 @@ export class BaileysProvider extends BaseProvider {
       name: input.name,
       color: input.color?.index,
     });
-    const label: Label = { id: input.id ?? res.id, name: input.name, color: input.color, active: true };
+    const label: Label = {
+      id: input.id ?? res.id,
+      name: input.name,
+      color: input.color,
+      active: true,
+    };
     this.labelStore.set(label.id, label);
     return label;
   }
@@ -545,14 +631,16 @@ export class BaileysProvider extends BaseProvider {
   async downloadMedia(msg: NormalizedMessage): Promise<Readable | null> {
     const raw = msg.raw as WAMessage;
     if (!raw?.message) return null;
-    const dl = (this.B as unknown as {
-      downloadMediaMessage?: (
-        m: WAMessage,
-        type: 'stream',
-        opts: object,
-        ctx: object,
-      ) => Promise<Readable>;
-    }).downloadMediaMessage;
+    const dl = (
+      this.B as unknown as {
+        downloadMediaMessage?: (
+          m: WAMessage,
+          type: 'stream',
+          opts: object,
+          ctx: object,
+        ) => Promise<Readable>;
+      }
+    ).downloadMediaMessage;
     if (!dl) return null;
     const stream = await dl(
       raw,
@@ -584,16 +672,24 @@ export class BaileysProvider extends BaseProvider {
     return this.toNewsletter(meta);
   }
   async followNewsletter(jid: string): Promise<void> {
-    await (this.socket() as WASocket & { newsletterFollow?: (j: string) => Promise<void> }).newsletterFollow?.(jid);
+    await (
+      this.socket() as WASocket & { newsletterFollow?: (j: string) => Promise<void> }
+    ).newsletterFollow?.(jid);
   }
   async unfollowNewsletter(jid: string): Promise<void> {
-    await (this.socket() as WASocket & { newsletterUnfollow?: (j: string) => Promise<void> }).newsletterUnfollow?.(jid);
+    await (
+      this.socket() as WASocket & { newsletterUnfollow?: (j: string) => Promise<void> }
+    ).newsletterUnfollow?.(jid);
   }
   async createNewsletter(input: CreateNewsletterInput): Promise<NewsletterInfo> {
     const sock = this.socket() as WASocket & {
-      newsletterCreate?: (name: string, opts: { description?: string }) => Promise<Record<string, unknown>>;
+      newsletterCreate?: (
+        name: string,
+        opts: { description?: string },
+      ) => Promise<Record<string, unknown>>;
     };
-    const res = (await sock.newsletterCreate?.(input.name, { description: input.description })) ?? {};
+    const res =
+      (await sock.newsletterCreate?.(input.name, { description: input.description })) ?? {};
     return this.toNewsletter({ ...res, name: input.name, description: input.description });
   }
 
@@ -601,12 +697,18 @@ export class BaileysProvider extends BaseProvider {
 
   async listGroups(): Promise<GroupInfo[]> {
     const groups = await this.socket().groupFetchAllParticipating();
-    return Object.values(groups).map((g) => this.toGroup(g as unknown as Record<string, unknown>));
+    const all = Object.values(groups).map((g) =>
+      this.toGroup(g as unknown as Record<string, unknown>),
+    );
+    await this.attachPictureUrls(all);
+    return all;
   }
 
   async groupMetadata(jid: string): Promise<GroupInfo> {
     const meta = await this.socket().groupMetadata(this.toGroupJid(jid));
-    return this.toGroup(meta as unknown as Record<string, unknown>);
+    const info = this.toGroup(meta as unknown as Record<string, unknown>);
+    info.pictureUrl = await this.fetchPictureUrl(info.jid);
+    return info;
   }
 
   async createGroup(input: CreateGroupInput): Promise<GroupInfo> {
@@ -682,6 +784,331 @@ export class BaileysProvider extends BaseProvider {
       announce: (g.announce as boolean | undefined) ?? false,
       restrict: (g.restrict as boolean | undefined) ?? false,
       isCommunity: (g.isCommunity as boolean | undefined) ?? false,
+    };
+  }
+
+  // ── comunidades ────────────────────────────────────
+  // Comunidade = grupo-pai (`isCommunity: true`) que agrupa subgrupos vinculados
+  // via `linkedParent`. A engine sempre cria automaticamente um subgrupo "Geral"
+  // (tag `create_general_chat`) junto com o de anúncios — não há como desligar
+  // isso na criação; ver `removeDefaultGroup` abaixo para a aproximação possível.
+
+  /**
+   * NÃO usamos `sock.communityMetadata`/`communityFetchAllParticipating`
+   * (as funções "dedicadas" de comunidade da própria lib Baileys) — verificado
+   * ao vivo contra o WhatsApp real que ambas são pouco confiáveis nesta versão:
+   * `communityMetadata` lança um TypeError cru (`Cannot read properties of
+   * undefined (reading 'attrs')`) dentro do parser `extractCommunityMetadata`,
+   * que procura uma tag `<community>` na resposta — mas o servidor responde a
+   * essa query com `<group>` (comunidade É um grupo com `isCommunity: true`
+   * no protocolo), e o parser não é defensivo (ao contrário de
+   * `extractGroupMetadata`, que trata `<group>` ausente sem quebrar). Isso é
+   * determinístico, não uma questão de timing — não adianta retry.
+   * `communityFetchAllParticipating` sofre do mesmo tipo de descompasso e
+   * devolve lista vazia mesmo com comunidades reais participando (confirmado:
+   * a mesma comunidade aparece corretamente via `groupFetchAllParticipating`).
+   * Por isso usamos as funções de GRUPO (já testadas/usadas em `listGroups`/
+   * `groupMetadata`) e filtramos por `isCommunity`.
+   */
+  async listCommunities(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]> {
+    const groups = await this.socket().groupFetchAllParticipating();
+    const all = Object.values(groups)
+      .filter((g) => (g as unknown as { isCommunity?: boolean }).isCommunity)
+      .map((g) => this.toCommunity(g as unknown as Record<string, unknown>));
+    const result = onlyOwnedOrAdmin ? all.filter((c) => this.isOwnedOrAdmin(c)) : all;
+    await this.attachPictureUrls(result);
+    return result;
+  }
+
+  /**
+   * SEMPRE resolve `announcementGroupJid`/`defaultGroupJid` (via
+   * `resolveLinkedGroups`) — não só na criação/sync. Bug real encontrado em
+   * QA manual: `createCommunity`/`syncCommunity` resolviam esses jids só pra
+   * ATRIBUIR no objeto de retorno daquela chamada, sem persistir em lugar
+   * nenhum; qualquer chamada SEGUINTE a `communityMetadata` (inclusive a que
+   * `sendCommunityAnnouncement` faz pra achar o grupo de anúncios) reconstruía
+   * o `CommunityInfo` do zero sem os dois campos — ou seja, o sync "resolvia"
+   * o anúncio, devolvia certo na resposta, mas o announcement seguinte
+   * consultava de novo e vinha sem `announcementGroupJid`, sempre. Não era
+   * timing — os dois caminhos de leitura simplesmente nunca convergiam.
+   */
+  async communityMetadata(jid: string): Promise<CommunityInfo> {
+    const meta = await this.socket().groupMetadata(this.toGroupJid(jid));
+    const info = this.toCommunity(meta as unknown as Record<string, unknown>);
+    const [{ announcementJid, defaultGroupJid }, pictureUrl] = await Promise.all([
+      this.resolveLinkedGroups(jid),
+      this.fetchPictureUrl(info.jid),
+    ]);
+    info.announcementGroupJid = announcementJid;
+    info.defaultGroupJid = defaultGroupJid;
+    info.pictureUrl = pictureUrl;
+    return info;
+  }
+
+  async createCommunity(input: CreateCommunityInput): Promise<CommunityInfo> {
+    const meta = await this.socket().communityCreate(input.subject, input.description ?? '');
+    if (!meta?.id) throw new Error('Baileys não retornou a comunidade criada');
+    const jid = meta.id;
+
+    if (input.picture) {
+      try {
+        await this.updateCommunityImage(jid, this.pictureToImageInput(input.picture));
+      } catch (err) {
+        this.logger.warn(
+          `[${this.instanceId}] falha ao definir imagem da comunidade ${jid}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Descoberta é assíncrona (a engine leva um instante pra tornar os
+    // subgrupos consultáveis) — por isso o evento `communities.announcement.discovered`.
+    const { announcementJid, defaultGroupJid } = await this.resolveLinkedGroups(jid);
+    if (announcementJid) this.emitAnnouncementDiscovered(jid, announcementJid);
+
+    const removeDefault = input.removeDefaultGroup || input.deleteDefaultGroupChat;
+    if (defaultGroupJid && input.participants?.length) {
+      try {
+        await this.socket().groupParticipantsUpdate(
+          defaultGroupJid,
+          input.participants.map((p) => this.toJid(p)),
+          'add',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `[${this.instanceId}] falha ao adicionar participantes iniciais na comunidade ${jid}: ${(err as Error).message}`,
+        );
+      }
+    }
+    if (defaultGroupJid && removeDefault) {
+      try {
+        // WhatsApp não expõe "apagar" o subgrupo padrão via multi-device — o
+        // bot só consegue sair dele (ver limitação em `deleteCommunity`).
+        await this.socket().groupLeave(defaultGroupJid);
+      } catch (err) {
+        this.logger.warn(
+          `[${this.instanceId}] falha ao sair do grupo padrão da comunidade ${jid}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // `communityMetadata` já resolve announcement/default sozinho (usa
+    // `groupMetadata`, caminho confiável — ver comentário lá). Só corrige o
+    // `defaultGroupJid` quando saímos dele acima (removeDefault).
+    const info = await this.communityMetadata(jid);
+    if (removeDefault) info.defaultGroupJid = undefined;
+    this.emitParticipantsSynced(info);
+    return info;
+  }
+
+  /**
+   * WhatsApp não expõe "apagar para todos" via protocolo multi-device — nem
+   * para o dono. A única operação disponível é sair da comunidade (o grupo
+   * continua existindo para os demais membros). Ver limitação no README/CLAUDE.md.
+   */
+  async deleteCommunity(jid: string): Promise<void> {
+    await this.socket().communityLeave(this.toGroupJid(jid));
+  }
+
+  async updateCommunitySubject(jid: string, subject: string): Promise<void> {
+    await this.socket().communityUpdateSubject(this.toGroupJid(jid), subject);
+  }
+
+  async updateCommunityDescription(jid: string, description: string): Promise<void> {
+    await this.socket().communityUpdateDescription(this.toGroupJid(jid), description);
+  }
+
+  async updateCommunityImage(jid: string, image: UpdateCommunityImageInput): Promise<void> {
+    const source = image.url ? { url: image.url } : Buffer.from(image.base64 ?? '', 'base64');
+    await this.socket().updateProfilePicture(this.toGroupJid(jid), source);
+  }
+
+  async updateCommunityAdmins(
+    jid: string,
+    members: string[],
+    action: CommunityAdminAction,
+  ): Promise<GroupParticipantResult[]> {
+    const res = await this.socket().communityParticipantsUpdate(
+      this.toGroupJid(jid),
+      members.map((m) => this.toJid(m)),
+      action,
+    );
+    return res.map((r) => ({ jid: r.jid ?? '', status: String(r.status) }));
+  }
+
+  async listCommunityMembers(jid: string): Promise<CommunityParticipant[]> {
+    return (await this.communityMetadata(jid)).participants;
+  }
+
+  async countCommunityMembers(jid: string): Promise<number> {
+    return (await this.communityMetadata(jid)).size;
+  }
+
+  async getCommunityInviteCode(jid: string): Promise<string> {
+    return (await this.socket().communityInviteCode(this.toGroupJid(jid))) ?? '';
+  }
+
+  async revokeCommunityInviteCode(jid: string): Promise<string> {
+    return (await this.socket().communityRevokeInvite(this.toGroupJid(jid))) ?? '';
+  }
+
+  /** Sonda o convite sem expor o código — só reporta se a comunidade está acessível. */
+  async probeCommunityInvite(jid: string): Promise<CommunityInviteProbeResult> {
+    try {
+      const code = await this.socket().communityInviteCode(this.toGroupJid(jid));
+      return { reachable: Boolean(code) };
+    } catch {
+      return { reachable: false };
+    }
+  }
+
+  async listCommunityLinkedGroups(jid: string): Promise<CommunityLinkedGroup[]> {
+    const { all } = await this.resolveLinkedGroups(jid, 1, 0);
+    return all;
+  }
+
+  async linkGroupToCommunity(groupJid: string, communityJid: string): Promise<void> {
+    await this.socket().communityLinkGroup(
+      this.toGroupJid(groupJid),
+      this.toGroupJid(communityJid),
+    );
+  }
+
+  async unlinkGroupFromCommunity(groupJid: string, communityJid: string): Promise<void> {
+    await this.socket().communityUnlinkGroup(
+      this.toGroupJid(groupJid),
+      this.toGroupJid(communityJid),
+    );
+  }
+
+  async syncCommunity(jid: string): Promise<CommunityInfo> {
+    // `communityMetadata` já resolve announcement/default sozinho — não
+    // precisa resolver de novo aqui.
+    const info = await this.communityMetadata(jid);
+    if (info.announcementGroupJid) {
+      this.emitAnnouncementDiscovered(info.jid, info.announcementGroupJid);
+    }
+    this.emitParticipantsSynced(info);
+    return info;
+  }
+
+  async syncAllCommunities(onlyOwnedOrAdmin?: boolean): Promise<CommunityInfo[]> {
+    const all = await this.listCommunities(onlyOwnedOrAdmin);
+    for (const info of all) this.emitParticipantsSynced(info);
+    return all;
+  }
+
+  /**
+   * A própria conta pode aparecer no `participants[].id` de uma comunidade
+   * tanto pelo jid de telefone (`…@s.whatsapp.net`) quanto pelo LID
+   * (`…@lid`) — o WhatsApp usa LID por privacidade em boa parte dos grupos
+   * modernos. `sock.user` traz as duas formas (`.id` e `.lid`), então
+   * comparamos contra ambas em vez de assumir uma única representação.
+   */
+  private isSelfParticipant(participantId: string): boolean {
+    const norm = (s?: string | null) => (s ? s.replace(/:\d+(?=@)/, '') : '');
+    const self = new Set([norm(this.sock?.user?.id), norm(this.sock?.user?.lid)].filter((s) => s));
+    return self.has(norm(participantId));
+  }
+
+  private isOwnedOrAdmin(info: CommunityInfo): boolean {
+    return info.participants.some(
+      (p) => (p.role === 'admin' || p.role === 'superadmin') && this.isSelfParticipant(p.id),
+    );
+  }
+
+  private pictureToImageInput(picture: string): UpdateCommunityImageInput {
+    if (picture.startsWith('http://') || picture.startsWith('https://')) return { url: picture };
+    const commaIndex = picture.indexOf(',');
+    const base64 =
+      picture.startsWith('data:') && commaIndex !== -1 ? picture.slice(commaIndex + 1) : picture;
+    return { base64 };
+  }
+
+  private emitParticipantsSynced(info: CommunityInfo): void {
+    this.emitWebhook(WebhookEvent.COMMUNITY_PARTICIPANTS_SYNCED, {
+      communityJid: info.jid,
+      name: info.subject,
+      description: info.description,
+      ownerJid: info.owner,
+      announcementJid: info.announcementGroupJid,
+      defaultSubgroupJid: info.defaultGroupJid,
+      participants: info.participants.map((p) => ({
+        jid: p.id,
+        isAdmin: p.role === 'admin' || p.role === 'superadmin',
+        isOwner: Boolean(info.owner) && p.id === info.owner,
+      })),
+    });
+  }
+
+  private emitAnnouncementDiscovered(communityJid: string, announcementGroupJid: string): void {
+    this.emitWebhook(WebhookEvent.COMMUNITY_ANNOUNCEMENT_DISCOVERED, {
+      communityJid,
+      announcementGroupJid,
+    });
+  }
+
+  /**
+   * Resolve o subgrupo de anúncios (`isCommunityAnnounce`) e o subgrupo
+   * "Geral" auto-criado pela engine. Logo após criar a comunidade, o servidor
+   * pode levar um instante para tornar os subgrupos consultáveis — por isso
+   * as tentativas com atraso curto (mesma estratégia usada por integrações
+   * de referência contra a mesma limitação do protocolo).
+   */
+  private async resolveLinkedGroups(
+    jid: string,
+    attempts = 3,
+    delayMs = 400,
+  ): Promise<{ announcementJid?: string; defaultGroupJid?: string; all: CommunityLinkedGroup[] }> {
+    const communityJid = this.toGroupJid(jid);
+    for (let i = 0; i < attempts; i += 1) {
+      if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
+      const { linkedGroups } = await this.socket().communityFetchLinkedGroups(communityJid);
+      const withIds = linkedGroups.filter((g): g is typeof g & { id: string } => Boolean(g.id));
+      if (!withIds.length) continue;
+
+      const withRoles = await Promise.all(
+        withIds.map(async (g) => {
+          const meta = await this.socket()
+            .groupMetadata(g.id)
+            .catch(() => null);
+          return { ...g, isAnnounce: meta?.isCommunityAnnounce ?? false };
+        }),
+      );
+
+      const announce = withRoles.find((g) => g.isAnnounce);
+      const general = withRoles.find((g) => !g.isAnnounce);
+      if (announce || general) {
+        return {
+          announcementJid: announce?.id,
+          defaultGroupJid: general?.id,
+          all: withRoles.map((g) => ({
+            jid: g.id,
+            subject: g.subject,
+            isAnnounce: g.isAnnounce,
+            size: g.size,
+          })),
+        };
+      }
+    }
+    return { all: [] };
+  }
+
+  private toCommunity(g: Record<string, unknown>): CommunityInfo {
+    const parts =
+      (g.participants as Array<{ id: string; admin?: string | null }> | undefined) ?? [];
+    return {
+      jid: String(g.id ?? ''),
+      subject: String(g.subject ?? ''),
+      description: (g.desc as string | undefined) ?? undefined,
+      owner: (g.owner as string | undefined) ?? (g.subjectOwner as string | undefined),
+      participants: parts.map((p) => ({
+        id: p.id,
+        role: p.admin === 'superadmin' ? 'superadmin' : p.admin === 'admin' ? 'admin' : 'member',
+      })),
+      size: (g.size as number | undefined) ?? parts.length,
+      creation: g.creation as number | undefined,
+      announce: (g.announce as boolean | undefined) ?? false,
+      restrict: (g.restrict as boolean | undefined) ?? false,
     };
   }
 
@@ -787,12 +1214,14 @@ export class BaileysProvider extends BaseProvider {
   private handlePollVote(pollId: string, chatId: string, pollUpdates: unknown[]): void {
     const original = this.polls.get(pollId);
     if (!original?.message) return;
-    const agg = (this.B as unknown as {
-      getAggregateVotesInPollMessage?: (o: {
-        message: unknown;
-        pollUpdates: unknown[];
-      }) => Array<{ name: string; voters: string[] }>;
-    }).getAggregateVotesInPollMessage;
+    const agg = (
+      this.B as unknown as {
+        getAggregateVotesInPollMessage?: (o: {
+          message: unknown;
+          pollUpdates: unknown[];
+        }) => Array<{ name: string; voters: string[] }>;
+      }
+    ).getAggregateVotesInPollMessage;
     if (!agg) return;
     const results = agg({ message: original.message, pollUpdates });
     const byVoter = new Map<string, string[]>();
