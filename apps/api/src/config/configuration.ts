@@ -88,4 +88,15 @@ export default () => ({
     retentionDays: parseInt(process.env.DATABASE_MESSAGE_RETENTION_DAYS ?? '0', 10), // 0 = sem expurgo
     storeMediaBody: (process.env.DATABASE_SAVE_MEDIA_BODY ?? 'false') === 'true', // grava url de mídia at-rest
   },
+
+  // Painel de Logs/Atividade — opt-in, default off. Escopo admin (não por
+  // instância). Ver docs/logs-painel-handoff.md.
+  activityLog: {
+    enabled: (process.env.ACTIVITY_LOG_ENABLED ?? 'false') === 'true',
+    // 0 = nunca expurga.
+    retentionDays: parseInt(process.env.ACTIVITY_LOG_RETENTION_DAYS ?? '0', 10),
+    // GET não loga por default (alto volume, baixo valor de auditoria) —
+    // POST/PUT/PATCH/DELETE sempre logam quando a flag acima está ligada.
+    includeGetRequests: (process.env.ACTIVITY_LOG_INCLUDE_GET ?? 'false') === 'true',
+  },
 });

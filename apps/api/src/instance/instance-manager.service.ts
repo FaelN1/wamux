@@ -18,6 +18,8 @@ import { AntiBanService } from '../throttle/anti-ban.service';
 import { RiskMonitorService } from '../throttle/risk-monitor.service';
 import { MediaService } from '../media/media.service';
 import { InboxStoreService } from '../inbox/inbox-store.service';
+import { ActivityLogService } from '../activity-log/activity-log.service';
+import { ActivityLogStatus, ActivityLogType } from '@wamux/shared';
 import { AntiBanConfig } from '@wamux/shared';
 import { ProviderFactory } from '../providers/provider.factory';
 import { InstanceRegistryService } from '../providers/instance-registry.service';
@@ -72,6 +74,7 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     private readonly riskMonitor: RiskMonitorService,
     private readonly media: MediaService,
     private readonly inboxStore: InboxStoreService,
+    private readonly activityLog: ActivityLogService,
   ) {}
 
   /** Registra um sinal de risco e emite ANTIBAN_ALERT se armar o freio. */
@@ -208,11 +211,27 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
       this.logger.debug(
         `[${m.instanceId}] DROP duplicata (${m.chatId}/${m.id}/fromMe=${m.fromMe}) — já vista < 60s`,
       );
+      void this.activityLog.record({
+        instanceId: m.instanceId,
+        type: ActivityLogType.MESSAGING,
+        status: ActivityLogStatus.SKIPPED,
+        activity: 'Message Received (duplicada)',
+        platform: provider.type,
+        message: `${m.chatId}/${m.id}`,
+      });
       return;
     }
     // 2) filtro de JID.
     if (!(await this.jidFilter.allows(m.instanceId, m.from, 'inbound'))) {
       this.logger.debug(`[${m.instanceId}] mensagem de ${m.from} bloqueada por filtro (inbound)`);
+      void this.activityLog.record({
+        instanceId: m.instanceId,
+        type: ActivityLogType.MESSAGING,
+        status: ActivityLogStatus.SKIPPED,
+        activity: 'Message Received (bloqueada por filtro)',
+        platform: provider.type,
+        message: m.from,
+      });
       return;
     }
     // 3) ingestão de mídia ANTES do fan-out: media.url pronto no webhook.
@@ -220,6 +239,14 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     // 4) log de entrada + Inbox (opt-in, no-op se as flags estiverem off) + fan-out.
     void this.messageLog.recordInbound(m);
     void this.inboxStore.onInboundMessage(m);
+    void this.activityLog.record({
+      instanceId: m.instanceId,
+      type: ActivityLogType.MESSAGING,
+      status: ActivityLogStatus.SUCCESS,
+      activity: 'Message Received',
+      platform: provider.type,
+      message: m.text || m.media?.caption || m.type,
+    });
     this.fanOut(m.instanceId, WebhookEvent.MESSAGE_RECEIVED, m);
   }
 
@@ -291,6 +318,17 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
   private wireEvents(provider: WhatsAppProvider): void {
     provider.on('connection', (u: ConnectionUpdate) => {
       void this.instances.updateStatus(u.instanceId, u.status, u.wid ?? undefined);
+      void this.activityLog.record({
+        instanceId: u.instanceId,
+        type: ActivityLogType.CONNECTION,
+        status:
+          u.status === ConnectionStatus.ERROR
+            ? ActivityLogStatus.FAILED
+            : ActivityLogStatus.SUCCESS,
+        activity: `Connection: ${u.status}`,
+        platform: provider.type,
+        message: u.reason,
+      });
       this.fanOut(u.instanceId, WebhookEvent.CONNECTION_UPDATE, u);
       if (u.qr) {
         this.fanOut(u.instanceId, WebhookEvent.QRCODE_UPDATED, {

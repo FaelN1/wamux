@@ -7,6 +7,8 @@ import { Logger } from 'nestjs-pino';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { createActivityLogMiddleware } from './common/middleware/activity-log.middleware';
+import { ActivityLogService } from './activity-log/activity-log.service';
 import { setupSwagger } from './swagger.config';
 
 async function bootstrap() {
@@ -36,6 +38,11 @@ async function bootstrap() {
   const bodyLimit = `${Math.ceil(mediaMaxMb * 1.4)}mb`;
   app.use(json({ limit: bodyLimit }));
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
+
+  // Painel de Logs/Atividade — middleware Express puro (não interceptor Nest:
+  // precisa rodar ANTES dos guards, senão apikey inválida/instância
+  // inexistente nunca apareceria no audit trail). Ver activity-log.middleware.ts.
+  app.use(createActivityLogMiddleware(app.get(ActivityLogService), config));
 
   app.setGlobalPrefix('api');
   // Versionamento por URI: rotas servem em /api/v1/*; health e

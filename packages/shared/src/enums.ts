@@ -101,3 +101,29 @@ export enum WebhookEvent {
   ANTIBAN_ALERT = 'antiban.alert',
   ERROR = 'error',
 }
+
+/**
+ * Categoria de evento no painel de Logs (ver `docs/logs-painel-handoff.md`).
+ * Recorte próprio do WAMux — não é 1:1 com nenhum outro produto.
+ */
+export enum ActivityLogType {
+  MESSAGING = 'messaging',
+  CONNECTION = 'connection',
+  GROUPS = 'groups',
+  COMMUNITIES = 'communities',
+  NEWSLETTER = 'newsletter',
+  API_REQUEST = 'api_request',
+}
+
+/**
+ * Resultado de um evento do painel de Logs. Mapeado em cima de conceitos que
+ * já existem no gateway — nunca inventa estado novo (ver §2 do design doc):
+ * `PENDING` = `queued: true` no outbound; `SKIPPED` = dedup de idempotência
+ * ou capability gate (501).
+ */
+export enum ActivityLogStatus {
+  SUCCESS = 'success',
+  FAILED = 'failed',
+  PENDING = 'pending',
+  SKIPPED = 'skipped',
+}

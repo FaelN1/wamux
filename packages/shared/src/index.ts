@@ -13,3 +13,4 @@ export * from './settings';
 export * from './stats';
 export * from './credentials';
 export * from './inbox';
+export * from './activity-log';

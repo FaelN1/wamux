@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  ScrollText,
   Settings,
   TerminalSquare,
 } from 'lucide-react';
@@ -27,6 +28,7 @@ const NAV: { path: string; label: string; icon: typeof LayoutDashboard }[] = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/instances', label: 'Instâncias', icon: MessageSquare },
   { path: '/inbox', label: 'Inbox', icon: Inbox },
+  { path: '/logs', label: 'Logs', icon: ScrollText },
   { path: '/playground', label: 'Playground', icon: TerminalSquare },
   { path: '/settings', label: 'Configurações', icon: Settings },
 ];

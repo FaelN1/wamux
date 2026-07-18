@@ -10,6 +10,11 @@ import { InstanceService } from '../instance/instance.service';
  * no mesmo HTTP server do Nest, em `/events`. O cliente conecta com
  * `?instance=<id>&apikey=<key>` e recebe, em tempo real, os eventos daquela
  * instância. Auth: a apikey precisa ser a da instância ou a GLOBAL_API_KEY.
+ *
+ * Modo admin (painel de Logs, ver `docs/logs-painel-handoff.md` §6): conectar
+ * SEM `instance` (só `?apikey=<GLOBAL_API_KEY>`) assina um canal à parte —
+ * `broadcastAll` — que recebe eventos de TODAS as instâncias, sem o filtro
+ * `effectiveEvents` por-instância (é uma visão admin, não de uma instância).
  */
 @Injectable()
 export class EventsWsGateway implements OnApplicationBootstrap, OnModuleDestroy {
@@ -17,6 +22,8 @@ export class EventsWsGateway implements OnApplicationBootstrap, OnModuleDestroy 
   private wss?: WebSocketServer;
   /** instanceId → sockets conectados. */
   private readonly clients = new Map<string, Set<WebSocket>>();
+  /** conexões admin (painel de Logs) — recebem tudo, independente de instância. */
+  private readonly adminClients = new Set<WebSocket>();
 
   constructor(
     private readonly adapterHost: HttpAdapterHost,
@@ -44,7 +51,17 @@ export class EventsWsGateway implements OnApplicationBootstrap, OnModuleDestroy 
       const url = new URL(req.url ?? '', 'http://localhost');
       const instanceId = url.searchParams.get('instance') ?? '';
       const apikey = url.searchParams.get('apikey') ?? '';
-      if (!instanceId) return ws.close(4000, 'parâmetro "instance" obrigatório');
+
+      if (!instanceId) {
+        const globalKey = this.config.get<string>('globalApiKey');
+        if (!apikey || apikey !== globalKey) return ws.close(4001, 'apikey inválida');
+        this.adminClients.add(ws);
+        ws.on('close', () => this.adminClients.delete(ws));
+        ws.on('error', () => this.adminClients.delete(ws));
+        ws.send(JSON.stringify({ event: 'ws.connected', timestamp: Date.now() }));
+        this.logger.debug(`WS admin conectado (${this.adminClients.size} clientes)`);
+        return;
+      }
 
       const inst = await this.instances.findOne(instanceId).catch(() => null);
       if (!inst) return ws.close(4004, 'instância não encontrada');
@@ -63,7 +80,9 @@ export class EventsWsGateway implements OnApplicationBootstrap, OnModuleDestroy 
       ws.on('close', () => this.remove(instanceId, ws));
       ws.on('error', () => this.remove(instanceId, ws));
       ws.send(JSON.stringify({ event: 'ws.connected', instanceId, timestamp: Date.now() }));
-      this.logger.debug(`WS conectado à instância ${instanceId} (${this.count(instanceId)} clientes)`);
+      this.logger.debug(
+        `WS conectado à instância ${instanceId} (${this.count(instanceId)} clientes)`,
+      );
     } catch {
       ws.close(1011, 'erro interno');
     }
@@ -81,6 +100,15 @@ export class EventsWsGateway implements OnApplicationBootstrap, OnModuleDestroy 
 
   count(instanceId: string): number {
     return this.clients.get(instanceId)?.size ?? 0;
+  }
+
+  /** Empurra um evento pro canal admin (painel de Logs) — todas as instâncias. */
+  broadcastAll(event: string, payload: unknown): void {
+    if (!this.adminClients.size) return;
+    const msg = JSON.stringify({ event, data: payload, timestamp: Date.now() });
+    for (const ws of this.adminClients) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+    }
   }
 
   private add(instanceId: string, ws: WebSocket): void {

@@ -3,6 +3,11 @@ import {
   PROVIDERS,
   WEBHOOK_EVENTS,
   EVENT_TRANSPORTS,
+  type ActivityLogEntry,
+  type ActivityLogFacetCounts,
+  type ActivityLogHistogramBucket,
+  type ActivityLogStatus,
+  type ActivityLogType,
   type ChatMessage,
   type ChatSummary,
   type ContactSummary,
@@ -311,4 +316,76 @@ export function useUpdateSettings() {
       req<WamuxSettings>('/settings', { method: 'PUT', body: JSON.stringify(patch) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   });
+}
+
+// ── painel de Logs/Atividade (escopo admin — GLOBAL_API_KEY) ─────────────
+export interface ActivityLogFilters {
+  from?: number;
+  to?: number;
+  status?: ActivityLogStatus[];
+  type?: ActivityLogType[];
+  statusCode?: number;
+  route?: string;
+  instanceId?: string;
+  platform?: string;
+  q?: string;
+}
+
+function activityLogQs(filters: ActivityLogFilters, extra?: Record<string, string>): string {
+  const p = new URLSearchParams();
+  if (filters.from != null) p.set('from', String(filters.from));
+  if (filters.to != null) p.set('to', String(filters.to));
+  if (filters.status?.length) p.set('status', filters.status.join(','));
+  if (filters.type?.length) p.set('type', filters.type.join(','));
+  if (filters.statusCode != null) p.set('statusCode', String(filters.statusCode));
+  if (filters.route) p.set('route', filters.route);
+  if (filters.instanceId) p.set('instanceId', filters.instanceId);
+  if (filters.platform) p.set('platform', filters.platform);
+  if (filters.q) p.set('q', filters.q);
+  for (const [k, v] of Object.entries(extra ?? {})) p.set(k, v);
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+export function useActivityLogs(filters: ActivityLogFilters, cursor?: string, limit = 50) {
+  const qs = activityLogQs(filters, { limit: String(limit), ...(cursor ? { cursor } : {}) });
+  return useQuery({
+    queryKey: ['activity-logs', filters, cursor, limit],
+    queryFn: () => req<PaginatedResult<ActivityLogEntry>>(`/activity-logs${qs}`),
+  });
+}
+
+export function useActivityLogFacets(filters: ActivityLogFilters) {
+  const qs = activityLogQs(filters);
+  return useQuery({
+    queryKey: ['activity-logs-facets', filters],
+    queryFn: () => req<ActivityLogFacetCounts>(`/activity-logs/facets${qs}`),
+  });
+}
+
+export function useActivityLogHistogram(
+  filters: ActivityLogFilters,
+  bucket: 'hour' | 'day' = 'hour',
+) {
+  const qs = activityLogQs(filters, { bucket });
+  return useQuery({
+    queryKey: ['activity-logs-histogram', filters, bucket],
+    queryFn: () => req<ActivityLogHistogramBucket[]>(`/activity-logs/histogram${qs}`),
+  });
+}
+
+/** Download direto — precisa do header `apikey` (não dá pra ser um link cru), então busca + blob. */
+export async function downloadActivityLogExport(filters: ActivityLogFilters): Promise<void> {
+  const qs = activityLogQs(filters);
+  const res = await fetch(`${BASE}/activity-logs/export${qs}`, {
+    headers: { apikey: getApiKey() },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'activity-logs.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }

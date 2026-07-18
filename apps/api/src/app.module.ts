@@ -25,6 +25,7 @@ import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
 import { InboxModule } from './inbox/inbox.module';
+import { ActivityLogModule } from './activity-log/activity-log.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { InboxModule } from './inbox/inbox.module';
     RedisModule,
     ThrottleModule,
     DatabaseModule,
+    ActivityLogModule,
     SettingsModule,
     IdentityModule,
     MediaModule,
