@@ -14,10 +14,9 @@ import { NormalizedMessage } from '../providers/provider.types';
 import { MEDIA_STORE, MediaStore } from './media-store.interface';
 import { SendMediaDto } from '../messaging/dto/send-media.dto';
 
-/** Fonte pronta para o adapter: url (streaming) OU buffer pequeno. */
+/** Fonte pronta pro envio: sempre uma URL própria (subida ao store quando veio de base64). */
 export interface OutboundSource {
   url?: string;
-  buffer?: Buffer;
   mimetype?: string;
   filename?: string;
 }
@@ -30,18 +29,26 @@ export interface OutboundSource {
 @Injectable()
 export class MediaService {
   private readonly logger = new Logger(MediaService.name);
-  private readonly inlineMax: number;
   private readonly maxBytes: number;
 
   constructor(
     private readonly config: ConfigService,
     @Inject(MEDIA_STORE) private readonly store: MediaStore,
   ) {
-    this.inlineMax = this.config.get<number>('media.inlineMaxBytes') ?? 262144;
     this.maxBytes = (this.config.get<number>('media.maxSizeMb') ?? 100) * 1024 * 1024;
   }
 
-  /** Normaliza a fonte de saída — evita Buffer gigante no heap. */
+  /**
+   * Normaliza a fonte de saída. `base64` sempre sobe pro store e vira uma
+   * URL própria — antes só subia acima de `inlineMax` (256KB), mas essa
+   * ramificação nunca tinha um consumidor real até `MessagingService.sendMedia`
+   * ser ligado a este método nesta sessão; a maioria das fotos/áudios reais
+   * de composer fica ABAIXO desse limite, então quase nenhum envio ganhava
+   * URL própria (achado em QA testando o composer do Inbox — sem URL, a
+   * mídia enviada nunca re-renderiza na thread depois). Ficou consistente
+   * com o inbound, que já sempre sobe pro store (`ingestInbound`, sem
+   * ramificação de tamanho nenhuma).
+   */
   async prepareOutbound(instanceId: string, dto: SendMediaDto): Promise<OutboundSource> {
     if (dto.url) return { url: dto.url, mimetype: dto.mimetype, filename: dto.filename };
     if (!dto.base64) throw new BadRequestException('Informe "url" ou "base64" da mídia');
@@ -49,9 +56,6 @@ export class MediaService {
     const buf = Buffer.from(dto.base64, 'base64');
     if (buf.byteLength > this.maxBytes) {
       throw new PayloadTooLargeException(`Mídia acima do limite (${this.maxBytes} bytes)`);
-    }
-    if (buf.byteLength <= this.inlineMax) {
-      return { buffer: buf, mimetype: dto.mimetype, filename: dto.filename };
     }
     const key = `outbound/${instanceId}/${randomUUID()}`;
     const { url } = await this.store.put(key, buf, { contentType: dto.mimetype });
@@ -72,7 +76,9 @@ export class MediaService {
       msg.media.size = size;
     } catch (e) {
       msg.media.mediaError = (e as Error).message; // nunca silencioso
-      this.logger.warn(`[${msg.instanceId}] falha ao ingerir mídia ${msg.id}: ${msg.media.mediaError}`);
+      this.logger.warn(
+        `[${msg.instanceId}] falha ao ingerir mídia ${msg.id}: ${msg.media.mediaError}`,
+      );
     }
   }
 
@@ -80,12 +86,33 @@ export class MediaService {
     instanceId: string,
     messageId: string,
     includeBase64: boolean,
-  ): Promise<{ stream?: Readable; base64?: string; mimetype?: string }> {
+  ): Promise<{ stream?: Readable; base64?: string; mimetype?: string; size?: number }> {
     const key = `inbound/${instanceId}/${messageId}`;
     const head = await this.store.stat(key);
     if (!head) throw new NotFoundException('Mídia não encontrada (ainda não ingerida ou expirada)');
-    if (!includeBase64) return { stream: await this.store.getStream(key), mimetype: head.contentType };
+    if (!includeBase64) {
+      return {
+        stream: await this.store.getStream(key),
+        mimetype: head.contentType,
+        size: head.size,
+      };
+    }
     const buf = await this.store.getBuffer(key);
     return { base64: buf.toString('base64'), mimetype: head.contentType };
+  }
+
+  /**
+   * Serve mídia de SAÍDA (composer/API, promovida de base64 pra URL em
+   * `prepareOutbound`). Rota pública (sem apikey) — o próprio engine (ex.
+   * Baileys) busca essa URL via HTTP puro pra relayar ao WhatsApp.
+   */
+  async fetchStoredOutbound(
+    instanceId: string,
+    fileKey: string,
+  ): Promise<{ stream: Readable; mimetype?: string; size: number }> {
+    const key = `outbound/${instanceId}/${fileKey}`;
+    const head = await this.store.stat(key);
+    if (!head) throw new NotFoundException('Mídia não encontrada (ainda não enviada ou expirada)');
+    return { stream: await this.store.getStream(key), mimetype: head.contentType, size: head.size };
   }
 }

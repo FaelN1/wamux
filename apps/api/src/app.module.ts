@@ -24,6 +24,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
+import { InboxModule } from './inbox/inbox.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { HealthModule } from './health/health.module';
     HistoryModule,
     StatsModule,
     HealthModule,
+    InboxModule,
   ],
 })
 export class AppModule {}

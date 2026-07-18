@@ -1,14 +1,16 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { setupSwagger } from './swagger.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
 
   // Logger estruturado (pino) como logger global.
   app.useLogger(app.get(Logger));
@@ -21,6 +23,19 @@ async function bootstrap() {
       'GLOBAL_API_KEY não configurada — defina-a no .env antes de subir em produção.',
     );
   }
+
+  // BUG REAL achado em QA: o limite default do body-parser do Express
+  // (100kb) rejeitava (`PayloadTooLargeError`, mascarado como 500 genérico
+  // pelo exception filter) QUALQUER envio de mídia via `base64` acima de
+  // ~75KB brutos — ou seja, praticamente toda foto/vídeo/áudio real,
+  // mesmo já estando dentro do limite que o próprio `media.maxSizeMb`
+  // declara suportar (usado hoje só pro download INBOUND). Alinha o limite
+  // do body JSON/urlencoded ao mesmo `MEDIA_MAX_SIZE_MB`, com folga pro
+  // overhead do base64 (~33%).
+  const mediaMaxMb = config.get<number>('media.maxSizeMb') ?? 100;
+  const bodyLimit = `${Math.ceil(mediaMaxMb * 1.4)}mb`;
+  app.use(json({ limit: bodyLimit }));
+  app.use(urlencoded({ extended: true, limit: bodyLimit }));
 
   app.setGlobalPrefix('api');
   // Versionamento por URI: rotas servem em /api/v1/*; health e

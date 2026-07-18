@@ -93,6 +93,9 @@ importers:
       class-validator:
         specifier: ^0.14.1
         version: 0.14.4
+      express:
+        specifier: 4.22.1
+        version: 4.22.1
       form-data:
         specifier: ^4.0.1
         version: 4.0.6

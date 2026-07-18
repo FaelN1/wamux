@@ -36,6 +36,8 @@ export interface ProviderCapabilities {
   communities?: boolean;
   /** perfil da própria conta conectada (nome/foto). */
   profile?: boolean;
+  /** foto de perfil de um contato/chat arbitrário por jid (Inbox — refetch de avatar). */
+  contactAvatar?: boolean;
   /** history sync (import de histórico). */
   history?: boolean;
   // ── interativos — granular por tipo ──

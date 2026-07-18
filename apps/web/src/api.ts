@@ -3,8 +3,12 @@ import {
   PROVIDERS,
   WEBHOOK_EVENTS,
   EVENT_TRANSPORTS,
+  type ChatMessage,
+  type ChatSummary,
+  type ContactSummary,
   type InstanceDTO,
   type InstanceEventsConfig,
+  type PaginatedResult,
   type ProviderType,
   type QrResponse,
   type SettingsUpdate,
@@ -207,6 +211,79 @@ export function useSendText() {
   return useMutation({
     mutationFn: ({ id, to, text }: { id: string; to: string; text: string }) =>
       req(`/messages/${id}/text`, { method: 'POST', body: JSON.stringify({ to, text }) }),
+  });
+}
+
+export interface SendMediaBody {
+  id: string;
+  to: string;
+  type: 'image' | 'video' | 'audio' | 'document' | 'sticker';
+  base64: string;
+  filename?: string;
+  mimetype?: string;
+  caption?: string;
+}
+
+/** Composer do Inbox reusa esse mesmo endpoint (`POST /messages/:id/media`) que já existia. */
+export function useSendMedia() {
+  return useMutation({
+    mutationFn: ({ id, ...body }: SendMediaBody) =>
+      req(`/messages/${id}/media`, { method: 'POST', body: JSON.stringify(body) }),
+  });
+}
+
+// ── Inbox (leitura persistida — opt-in via DATABASE_SAVE_DATA_*) ─────────
+
+export interface ChatsFilter {
+  q?: string;
+  type?: string;
+  archived?: boolean;
+}
+
+/** Lista de conversas persistidas, "Newest first". Vazia se `persistence.contacts` off. */
+export function useChats(instanceId: string | null, filter: ChatsFilter = {}) {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.type) params.set('type', filter.type);
+  if (filter.archived != null) params.set('archived', String(filter.archived));
+  const qs = params.toString();
+  return useQuery({
+    queryKey: ['inbox-chats', instanceId, filter],
+    enabled: !!instanceId,
+    queryFn: () =>
+      req<PaginatedResult<ChatSummary>>(`/instances/${instanceId}/chats${qs ? `?${qs}` : ''}`),
+  });
+}
+
+/** Thread persistida de um chat. Rota separada da ao-vivo (`/messages`, sem `/db`). */
+export function useChatMessages(instanceId: string | null, jid: string | null) {
+  return useQuery({
+    queryKey: ['inbox-messages', instanceId, jid],
+    enabled: !!instanceId && !!jid,
+    queryFn: () => {
+      const encodedJid = encodeURIComponent(jid ?? '');
+      return req<PaginatedResult<ChatMessage>>(
+        `/instances/${instanceId}/chats/${encodedJid}/messages/db?limit=50`,
+      );
+    },
+  });
+}
+
+export function useContacts(instanceId: string | null, q?: string) {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  return useQuery({
+    queryKey: ['inbox-contacts', instanceId, q],
+    enabled: !!instanceId,
+    queryFn: () => req<PaginatedResult<ContactSummary>>(`/instances/${instanceId}/contacts${qs}`),
+  });
+}
+
+export function useMarkChatRead() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, jid }: { id: string; jid: string }) =>
+      req(`/instances/${id}/chats/${encodeURIComponent(jid)}/read`, { method: 'POST' }),
+    onSuccess: (_data, { id }) => qc.invalidateQueries({ queryKey: ['inbox-chats', id] }),
   });
 }
 

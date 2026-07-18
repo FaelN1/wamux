@@ -25,8 +25,10 @@ import {
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
+import { InboxStoreService } from '../inbox/inbox-store.service';
 import { MessageLogEntity } from './message-log.entity';
 import { JidFilterService } from '../common/jid-filter.service';
+import { MediaService } from '../media/media.service';
 import { SendMediaDto } from './dto/send-media.dto';
 import { SendTextDto } from './dto/send-text.dto';
 import { SendPollDto } from './dto/send-poll.dto';
@@ -62,6 +64,8 @@ export class MessagingService {
     private readonly polls: PollStore,
     private readonly jidFilter: JidFilterService,
     private readonly messageLog: MessageLogService,
+    private readonly inboxStore: InboxStoreService,
+    private readonly media: MediaService,
     @InjectQueue(OUTBOUND_QUEUE) private readonly queue: Queue<OutboundJob>,
   ) {}
 
@@ -82,15 +86,25 @@ export class MessagingService {
     return this.dispatch(instanceId, 'text', payload, dto.clientMessageId);
   }
 
-  sendMedia(instanceId: string, dto: SendMediaDto): Promise<SendOutcome> {
+  /**
+   * `MediaService.prepareOutbound` (pré-existente, mas nunca chamado daqui
+   * — o próprio comentário do `MediaModule` já dizia "MessagingService
+   * (saída) injeta o MediaService", só a ligação nunca tinha sido feita)
+   * sobe `base64` pro nosso store e devolve uma URL servível ANTES de
+   * mandar — sem isso, mídia enviada via base64 nunca tinha URL própria
+   * pra persistir/re-exibir depois na thread do Inbox (só existia dentro
+   * do protocolo do WhatsApp, inacessível pra nós depois do envio).
+   */
+  async sendMedia(instanceId: string, dto: SendMediaDto): Promise<SendOutcome> {
     if (!dto.url && !dto.base64) {
       throw new BadRequestException('Informe "url" ou "base64" da mídia');
     }
+    const source = await this.media.prepareOutbound(instanceId, dto);
     const payload: SendMediaInput = {
       to: dto.to,
       type: dto.type,
-      url: dto.url,
-      base64: dto.base64,
+      url: source.url ?? dto.url,
+      base64: source.url ? undefined : dto.base64,
       caption: dto.caption,
       filename: dto.filename,
       mimetype: dto.mimetype,
@@ -200,7 +214,10 @@ export class MessagingService {
       const opts = input.buttons
         .map((b, i) => `${i + 1}. ${b.title}${b.type === 'url' ? ` — ${b.url}` : ''}`)
         .join('\n');
-      return { to: input.to, text: [input.text, '', opts, input.footer].filter(Boolean).join('\n') };
+      return {
+        to: input.to,
+        text: [input.text, '', opts, input.footer].filter(Boolean).join('\n'),
+      };
     }
     if ('sections' in input) {
       const opts = input.sections
@@ -272,11 +289,27 @@ export class MessagingService {
       try {
         const result = await this.send(instanceId, kind, payload);
         if (idemKey) await this.idem.complete(idemKey, result.id);
+        // `result.to` é o destino já resolvido/normalizado pelo PRÓPRIO
+        // provider (cada engine tem seu `toJid`/`toChatId`/`toNumber`) —
+        // usar isso em vez de `payload.to` (o que o cliente da API mandou
+        // cru, ex.: "5511999999999" sem "@s.whatsapp.net") garante que o
+        // mesmo contato real vira a MESMA chatId tanto no outbound quanto
+        // no inbound (que já chega normalizado pelo protocolo da própria
+        // lib) — sem isso, o mesmo contato podia virar duas linhas em
+        // `contacts` dependendo de quem mandou a primeira mensagem.
         void this.messageLog.recordOutbound({
           id: result.id,
           instanceId,
-          chatId: payload.to,
+          chatId: result.to,
           clientMessageId,
+        });
+        void this.inboxStore.onOutbound({
+          instanceId,
+          chatId: result.to,
+          id: result.id,
+          kind,
+          payload,
+          timestamp: result.timestamp,
         });
         return { ...result, queued: false };
       } catch (e) {

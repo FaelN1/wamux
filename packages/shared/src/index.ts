@@ -12,3 +12,4 @@ export * from './events';
 export * from './settings';
 export * from './stats';
 export * from './credentials';
+export * from './inbox';

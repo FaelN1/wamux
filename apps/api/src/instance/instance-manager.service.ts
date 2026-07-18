@@ -17,6 +17,7 @@ import { InboundDedupService } from '../throttle/inbound-dedup.service';
 import { AntiBanService } from '../throttle/anti-ban.service';
 import { RiskMonitorService } from '../throttle/risk-monitor.service';
 import { MediaService } from '../media/media.service';
+import { InboxStoreService } from '../inbox/inbox-store.service';
 import { AntiBanConfig } from '@wamux/shared';
 import { ProviderFactory } from '../providers/provider.factory';
 import { InstanceRegistryService } from '../providers/instance-registry.service';
@@ -70,6 +71,7 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     private readonly antiBan: AntiBanService,
     private readonly riskMonitor: RiskMonitorService,
     private readonly media: MediaService,
+    private readonly inboxStore: InboxStoreService,
   ) {}
 
   /** Registra um sinal de risco e emite ANTIBAN_ALERT se armar o freio. */
@@ -215,8 +217,9 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     }
     // 3) ingestão de mídia ANTES do fan-out: media.url pronto no webhook.
     await this.media.ingestInbound(provider, m);
-    // 4) log de entrada + fan-out.
+    // 4) log de entrada + Inbox (opt-in, no-op se as flags estiverem off) + fan-out.
     void this.messageLog.recordInbound(m);
+    void this.inboxStore.onInboundMessage(m);
     this.fanOut(m.instanceId, WebhookEvent.MESSAGE_RECEIVED, m);
   }
 
@@ -328,12 +331,14 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
 
     provider.on('message.status', (s: MessageStatusUpdate) => {
       void this.messageLog.applyStatus(s); // persiste ack monotônico
+      void this.inboxStore.onStatus(s); // propaga ack ao chat (opt-in)
       this.fanOut(s.instanceId, WebhookEvent.MESSAGE_STATUS, s);
     });
 
     // Cauda longa (chats, contatos, grupos, presença, chamada, etiquetas…):
     // o provider já resolve qual evento é; aqui só repassamos.
     provider.on('webhook', (w: WebhookPassthrough) => {
+      void this.inboxStore.enrichFrom(w); // oportunista: contacts/chats.upsert (Baileys)
       this.fanOut(w.instanceId, w.event, w.payload);
     });
 

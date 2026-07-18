@@ -22,30 +22,52 @@ export class LocalMediaStore implements MediaStore {
     return p;
   }
 
-  /** URL servível: o MediaController lê inbound/<id>/<messageId>. */
+  /** Sidecar com o content-type — disco não guarda metadata própria. */
+  private metaPath(key: string): string {
+    return `${this.path(key)}.meta.json`;
+  }
+
+  /**
+   * URL servível. inbound/<instanceId>/<messageId> → MediaController
+   * (guardado por apikey de instância). outbound/<instanceId>/<uuid> →
+   * PublicMediaController (SEM guard — o próprio engine, ex. Baileys, busca
+   * essa URL via HTTP puro pra relayar ao WhatsApp, então não carrega
+   * apikey; a segurança vem do uuid não-adivinhável no path).
+   */
   private url(key: string): string {
-    const m = key.match(/^inbound\/([^/]+)\/(.+)$/);
-    if (m) return `${this.publicBaseUrl}/api/v1/messages/${m[1]}/media/${m[2]}`;
+    const inboundMatch = key.match(/^inbound\/([^/]+)\/(.+)$/);
+    if (inboundMatch)
+      return `${this.publicBaseUrl}/api/v1/messages/${inboundMatch[1]}/media/${inboundMatch[2]}`;
+    const outboundMatch = key.match(/^outbound\/([^/]+)\/(.+)$/);
+    if (outboundMatch)
+      return `${this.publicBaseUrl}/api/v1/media/outbound/${outboundMatch[1]}/${outboundMatch[2]}`;
     return `${this.publicBaseUrl}/api/v1/media/${encodeURIComponent(key)}`;
   }
 
-  async put(key: string, body: Buffer, _opts?: PutOptions): Promise<{ url: string; size: number }> {
+  private async writeMeta(key: string, opts?: PutOptions): Promise<void> {
+    if (!opts?.contentType) return;
+    await fs.writeFile(this.metaPath(key), JSON.stringify({ contentType: opts.contentType }));
+  }
+
+  async put(key: string, body: Buffer, opts?: PutOptions): Promise<{ url: string; size: number }> {
     const p = this.path(key);
     await fs.mkdir(dirname(p), { recursive: true });
     await fs.writeFile(p, body);
+    await this.writeMeta(key, opts);
     return { url: this.url(key), size: body.byteLength };
   }
 
   async putStream(
     key: string,
     body: Readable,
-    _opts?: PutOptions,
+    opts?: PutOptions,
   ): Promise<{ url: string; size: number }> {
     const p = this.path(key);
     await fs.mkdir(dirname(p), { recursive: true });
     let size = 0;
     body.on('data', (c: Buffer) => (size += c.length));
     await pipeline(body, createWriteStream(p));
+    await this.writeMeta(key, opts);
     return { url: this.url(key), size };
   }
 
@@ -60,7 +82,14 @@ export class LocalMediaStore implements MediaStore {
   async stat(key: string): Promise<StoredHead | null> {
     try {
       const st = await fs.stat(this.path(key));
-      return { size: st.size };
+      let contentType: string | undefined;
+      try {
+        const raw = await fs.readFile(this.metaPath(key), 'utf-8');
+        contentType = JSON.parse(raw).contentType;
+      } catch {
+        // sem sidecar — content-type desconhecido, tudo bem.
+      }
+      return { size: st.size, contentType };
     } catch {
       return null;
     }
@@ -68,6 +97,7 @@ export class LocalMediaStore implements MediaStore {
 
   async remove(key: string): Promise<void> {
     await fs.rm(this.path(key), { force: true });
+    await fs.rm(this.metaPath(key), { force: true });
   }
 
   /** Diretório base — exposto para o join de chaves em testes. */

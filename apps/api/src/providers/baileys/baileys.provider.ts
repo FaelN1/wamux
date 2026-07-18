@@ -85,6 +85,7 @@ export class BaileysProvider extends BaseProvider {
     groups: true,
     communities: true,
     profile: true,
+    contactAvatar: true,
     history: true,
     poll: true,
     pollResults: true,
@@ -490,6 +491,11 @@ export class BaileysProvider extends BaseProvider {
     return { jid, name, profilePicUrl };
   }
 
+  /** Reusa o mesmo `fetchPictureUrl` privado já usado pra grupos/comunidades/perfil próprio. */
+  async getContactAvatar(jid: string): Promise<string | undefined> {
+    return this.fetchPictureUrl(jid);
+  }
+
   /**
    * `sock.profilePictureUrl(jid, type)` funciona pra QUALQUER jid — usuário,
    * grupo ou comunidade (mesmo mecanismo de `getProfile`, só muda o jid).
@@ -500,7 +506,12 @@ export class BaileysProvider extends BaseProvider {
     if (!jid) return undefined;
     try {
       return await this.socket().profilePictureUrl(jid, 'image');
-    } catch {
+    } catch (e) {
+      // Sem foto/privacidade restringindo NÃO é bug — mas erro de verdade
+      // (jid mal formado, timeout, etc.) ficava indistinguível disso antes.
+      this.logger.debug(
+        `[${this.instanceId}] fetchPictureUrl(${jid}) falhou: ${(e as Error).message}`,
+      );
       return undefined;
     }
   }

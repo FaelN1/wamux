@@ -64,6 +64,7 @@ export class WebjsProvider extends BaseProvider {
     list: false,
     pix: false,
     profile: true,
+    contactAvatar: true,
     newsletter: true,
     // Confirmado no código-fonte da lib (Client.js#sendMessage): canal aceita
     // image/sticker/gif(=video+asGif)/video/audio/poll; document/location/
@@ -539,6 +540,11 @@ export class WebjsProvider extends BaseProvider {
     const name = client.info?.pushname || undefined;
     const profilePicUrl = await this.fetchPictureUrl(jid);
     return { jid, name, profilePicUrl };
+  }
+
+  /** Reusa o mesmo `fetchPictureUrl` privado já usado pra grupos/perfil próprio. */
+  async getContactAvatar(jid: string): Promise<string | undefined> {
+    return this.fetchPictureUrl(jid);
   }
 
   /**

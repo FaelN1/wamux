@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
 import { ContactsService } from './contacts.service';
@@ -15,6 +6,7 @@ import { NumberCheckService } from './number-check.service';
 import { SetPresenceDto } from './dto/set-presence.dto';
 import { CheckNumbersDto } from './dto/check-numbers.dto';
 import { FetchMessagesQueryDto } from './dto/fetch-messages.query.dto';
+import { InboxQueryService } from '../inbox/inbox-query.service';
 
 @ApiTags('Contatos & Chats')
 @ApiSecurity('apikey')
@@ -24,6 +16,7 @@ export class ContactsController {
   constructor(
     private readonly contacts: ContactsService,
     private readonly numbers: NumberCheckService,
+    private readonly inboxQuery: InboxQueryService,
   ) {}
 
   @Post('contacts/:jid/block')
@@ -46,7 +39,11 @@ export class ContactsController {
   @HttpCode(200)
   @ApiOperation({ summary: 'Seta presença (digitando/gravando/online).' })
   async setPresence(@Param('id') id: string, @Body() dto: SetPresenceDto) {
-    await this.contacts.setPresence(id, { to: dto.to, state: dto.state, durationMs: dto.durationMs });
+    await this.contacts.setPresence(id, {
+      to: dto.to,
+      state: dto.state,
+      durationMs: dto.durationMs,
+    });
     return { ok: true };
   }
 
@@ -70,8 +67,16 @@ export class ContactsController {
 
   @Post('chats/:jid/read')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Marca um chat como lido.' })
+  @ApiOperation({
+    summary: 'Marca um chat como lido (protocolo ao vivo + unread persistido do Inbox).',
+  })
   async read(@Param('id') id: string, @Param('jid') jid: string) {
+    // Unread local primeiro — operação de DB pura, não depende de conexão
+    // ao vivo. Se o markRead ao vivo (abaixo) falhar (ex.: desconectado), o
+    // unread do Inbox já ficou zerado mesmo assim (comportamento existente
+    // de propagar o erro do ao-vivo é preservado, só a ordem garante que a
+    // parte persistida não fica refém da ao-vivo).
+    await this.inboxQuery.markRead(id, jid);
     await this.contacts.markRead(id, jid);
     return { ok: true };
   }

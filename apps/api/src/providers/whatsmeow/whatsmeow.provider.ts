@@ -79,6 +79,7 @@ export class WhatsmeowProvider extends BaseProvider {
     labels: true,
     communities: true,
     profile: true,
+    contactAvatar: true,
     newsletter: true,
     // Cablado no sidecar: SendMedia agora usa UploadNewsletter + SendRequestExtra.MediaHandle
     // pra destinos @newsletter (sem criptografia, mesmo mecanismo documentado
@@ -313,12 +314,13 @@ export class WhatsmeowProvider extends BaseProvider {
   }
 
   async sendText(input: SendTextInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
     const res = await this.client().post('/message/text', {
-      to: this.toJid(input.to),
+      to: jid,
       text: input.text,
       reply_to: input.quotedMessageId,
     });
-    return this.result(res.data, input.to);
+    return this.result(res.data, jid);
   }
 
   async sendMedia(input: SendMediaInput): Promise<SendResult> {
@@ -328,8 +330,9 @@ export class WhatsmeowProvider extends BaseProvider {
     if (!input.url) {
       throw new Error('whatsmeow (serviço Go): envio de mídia exige "url" (base64 não suportado)');
     }
+    const jid = this.toJid(input.to);
     const res = await this.client().post('/message/media', {
-      to: this.toJid(input.to),
+      to: jid,
       type: input.type,
       url: input.url,
       caption: input.caption,
@@ -337,18 +340,19 @@ export class WhatsmeowProvider extends BaseProvider {
       mime_type: input.mimetype,
       reply_to: input.quotedMessageId,
     });
-    return this.result(res.data, input.to);
+    return this.result(res.data, jid);
   }
 
   /** `POST /message/poll` já existe no sidecar (`BuildPollCreation` da lib — sem upload, sem TOS, qualquer destino incl. `@newsletter`). */
   async sendPoll(input: SendPollInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
     const res = await this.client().post('/message/poll', {
-      to: this.toJid(input.to),
+      to: jid,
       question: input.question,
       options: input.options,
       max_selections: input.selectableCount ?? 1,
     });
-    return this.result(res.data, input.to);
+    return this.result(res.data, jid);
   }
 
   async logout(): Promise<void> {
@@ -1019,6 +1023,11 @@ export class WhatsmeowProvider extends BaseProvider {
     } catch (e) {
       throw new Error(this.goError(e));
     }
+  }
+
+  /** Reusa o mesmo `fetchPictureUrl` privado (`GET /contact/:jid` no sidecar) já usado pra grupos/comunidades. */
+  async getContactAvatar(jid: string): Promise<string | undefined> {
+    return this.fetchPictureUrl(jid);
   }
 
   /**

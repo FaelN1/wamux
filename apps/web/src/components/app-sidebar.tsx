@@ -1,5 +1,6 @@
 import {
   Hexagon,
+  Inbox,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -25,6 +26,7 @@ import {
 const NAV: { path: string; label: string; icon: typeof LayoutDashboard }[] = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/instances', label: 'Instâncias', icon: MessageSquare },
+  { path: '/inbox', label: 'Inbox', icon: Inbox },
   { path: '/playground', label: 'Playground', icon: TerminalSquare },
   { path: '/settings', label: 'Configurações', icon: Settings },
 ];

@@ -51,7 +51,6 @@ export default () => ({
   media: {
     store: process.env.MEDIA_STORE ?? 'local',
     maxSizeMb: parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10),
-    inlineMaxBytes: parseInt(process.env.MEDIA_INLINE_MAX_BYTES ?? '262144', 10),
     local: { dir: process.env.MEDIA_LOCAL_DIR ?? './data/media' },
   },
 
@@ -75,5 +74,18 @@ export default () => ({
     version: process.env.CLOUD_API_VERSION ?? 'v21.0',
     baseUrl: process.env.CLOUD_API_BASE_URL ?? 'https://graph.facebook.com',
     verifyToken: process.env.CLOUD_API_VERIFY_TOKEN ?? '',
+  },
+
+  // Persistência do Inbox (contato-chat/mensagens). Opt-in por privacidade —
+  // default off. Nomes espelham as flags DATABASE_SAVE_* da Evolution API
+  // (familiaridade pra quem migra). Ver docs/inbox-persistencia-handoff.md.
+  persistence: {
+    contacts: (process.env.DATABASE_SAVE_DATA_CONTACTS ?? 'false') === 'true',
+    newMessage: (process.env.DATABASE_SAVE_DATA_NEW_MESSAGE ?? 'false') === 'true',
+    messageUpdate: (process.env.DATABASE_SAVE_MESSAGE_UPDATE ?? 'false') === 'true',
+    historic: (process.env.DATABASE_SAVE_DATA_HISTORIC ?? 'false') === 'true',
+    // Higiene multi-tenant.
+    retentionDays: parseInt(process.env.DATABASE_MESSAGE_RETENTION_DAYS ?? '0', 10), // 0 = sem expurgo
+    storeMediaBody: (process.env.DATABASE_SAVE_MEDIA_BODY ?? 'false') === 'true', // grava url de mídia at-rest
   },
 });

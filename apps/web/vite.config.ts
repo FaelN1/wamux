@@ -18,6 +18,13 @@ export default defineConfig({
         target: process.env.WAMUX_API ?? 'http://localhost:3000',
         changeOrigin: true,
       },
+      // WebSocket de eventos (tempo real do Inbox) — EventsWsGateway em
+      // /events, fora de /api. `ws: true` faz o Vite tratar o upgrade.
+      '/events': {
+        target: process.env.WAMUX_API ?? 'http://localhost:3000',
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
 });

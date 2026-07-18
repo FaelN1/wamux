@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Param,
-  Query,
-  Res,
-  StreamableFile,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
@@ -30,6 +22,9 @@ export class MediaController {
     const out = await this.media.fetchStored(id, messageId, includeBase64 === 'true');
     if (out.base64) return { mimetype: out.mimetype, base64: out.base64 };
     if (out.mimetype) res.setHeader('Content-Type', out.mimetype);
-    return new StreamableFile(out.stream!);
+    // `length` explícito evita Transfer-Encoding: chunked — sem ele, o
+    // <audio>/<video> do Chrome fica preso em readyState=0 (nunca toca)
+    // mesmo com os bytes chegando certos, por falta de Content-Length.
+    return new StreamableFile(out.stream!, { length: out.size });
   }
 }

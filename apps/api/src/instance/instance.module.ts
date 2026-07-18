@@ -14,6 +14,7 @@ import { InstanceController } from './instance.controller';
 import { InboundWebhookController } from './inbound-webhook.controller';
 import { IdentityController } from '../identity/identity.controller';
 import { MediaController } from '../media/media.controller';
+import { PublicMediaController } from '../media/public-media.controller';
 
 @Module({
   imports: [
@@ -23,7 +24,13 @@ import { MediaController } from '../media/media.controller';
     WebhookModule,
     forwardRef(() => EventsModule),
   ],
-  controllers: [InstanceController, InboundWebhookController, IdentityController, MediaController],
+  controllers: [
+    InstanceController,
+    InboundWebhookController,
+    IdentityController,
+    MediaController,
+    PublicMediaController,
+  ],
   providers: [InstanceService, InstanceManagerService, JidFilterService, MessageLogService],
   // exportados para o MessagingModule (envio) e para os guards de API key.
   exports: [InstanceService, InstanceManagerService, JidFilterService, MessageLogService],

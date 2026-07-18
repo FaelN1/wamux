@@ -275,6 +275,10 @@ export interface WhatsAppProvider {
   /** Nome/foto da própria conta conectada nesta instância. */
   getProfile?(): Promise<ProfileInfo>;
 
+  // ── avatar de contato arbitrário (gated por capabilities.contactAvatar) ──
+  /** Foto de perfil de QUALQUER jid (contato/grupo) — usado pelo refetch lazy do Inbox. `undefined` sem foto/privacidade restringindo, nunca erro. */
+  getContactAvatar?(jid: string): Promise<string | undefined>;
+
   // ── histórico (gated por capabilities.history) ─────
   /**
    * Solicita sincronização de histórico sob demanda. Resolve quando a REQUISIÇÃO
