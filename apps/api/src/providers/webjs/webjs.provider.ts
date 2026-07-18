@@ -1,5 +1,13 @@
 import { Readable } from 'node:stream';
-import { Client, GroupChat, RemoteAuth, Message, MessageMedia, Poll } from 'whatsapp-web.js';
+import {
+  Client,
+  GroupChat,
+  RemoteAuth,
+  Message,
+  MessageMedia,
+  Poll,
+  Channel,
+} from 'whatsapp-web.js';
 import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import { classifyJid } from '../jid.util';
@@ -19,6 +27,8 @@ import {
   NormalizedMessage,
   NumberCheckResult,
   ProfileInfo,
+  NewsletterInfo,
+  CreateNewsletterInput,
   ProviderType,
   SendMediaInput,
   SendPollInput,
@@ -54,6 +64,15 @@ export class WebjsProvider extends BaseProvider {
     list: false,
     pix: false,
     profile: true,
+    newsletter: true,
+    // Confirmado no código-fonte da lib (Client.js#sendMessage): canal aceita
+    // image/sticker/gif(=video+asGif)/video/audio/poll; document/location/
+    // contact/buttons/list são bloqueados explicitamente (retornam null com
+    // warning, nem tentam). Há um issue aberto (#201823) sobre instabilidade
+    // de mídia em canal — funciona, mas com risco conhecido a montante.
+    newsletterMedia: true,
+    newsletterUnsupportedMediaTypes: ['document'] as Array<'document'>,
+    newsletterPoll: true,
   };
 
   private client?: Client;
@@ -384,6 +403,98 @@ export class WebjsProvider extends BaseProvider {
   /** Aceita jid já formatado (…@g.us) ou o id cru do grupo. */
   private toGroupJid(jid: string): string {
     return jid.includes('@') ? jid : `${jid.replace(/\D/g, '')}@g.us`;
+  }
+
+  // ── canais/newsletter (gated por capabilities.newsletter) ─
+  // `createChannel` já checa elegibilidade internamente (WAWebNewsletterGatingUtils
+  // .isNewsletterCreationEnabled() — confirmado no código-fonte da lib) e devolve
+  // uma STRING de erro em vez do resultado quando a conta não pode criar canal —
+  // mesmo padrão de erro já tratado abaixo em `createGroup`.
+
+  async listNewsletters(): Promise<NewsletterInfo[]> {
+    const channels = await this.requireClient().getChannels();
+    const all = channels.map((c) => this.toNewsletter(c));
+    await this.attachPictureUrls(all);
+    return all;
+  }
+
+  async newsletterMetadata(jid: string): Promise<NewsletterInfo> {
+    const chat = await this.requireClient().getChatById(this.toChannelJid(jid));
+    const info = this.toNewsletter(chat as unknown as Channel);
+    info.pictureUrl = await this.fetchPictureUrl(info.jid);
+    return info;
+  }
+
+  async createNewsletter(input: CreateNewsletterInput): Promise<NewsletterInfo> {
+    const res = await this.requireClient().createChannel(input.name, {
+      description: input.description,
+    });
+    if (typeof res === 'string') throw new Error(`webjs: falha ao criar canal: ${res}`);
+    return {
+      jid: res.nid._serialized,
+      name: res.title,
+      description: input.description,
+      subscriberCount: 0,
+      role: 'owner',
+      muted: false,
+      inviteCode: res.inviteLink.replace(/^https?:\/\/whatsapp\.com\/channel\//, ''),
+    };
+  }
+
+  async followNewsletter(jid: string): Promise<void> {
+    const ok = await this.requireClient().subscribeToChannel(this.toChannelJid(jid));
+    if (!ok) throw new Error(`webjs: falha ao seguir o canal ${jid}`);
+  }
+
+  async unfollowNewsletter(jid: string): Promise<void> {
+    const ok = await this.requireClient().unsubscribeFromChannel(this.toChannelJid(jid));
+    if (!ok) throw new Error(`webjs: falha ao deixar de seguir o canal ${jid}`);
+  }
+
+  /** Aceita jid já formatado (…@newsletter) ou o id cru do canal. */
+  private toChannelJid(jid: string): string {
+    return jid.includes('@') ? jid : `${jid}@newsletter`;
+  }
+
+  /**
+   * `Channel` não documenta subscriberCount/role/inviteCode no `.d.ts` público —
+   * vêm de `channelMetadata` (`chat.newsletterMetadata.serialize()`, campo cru
+   * não tipado, confirmado existir em `src/structures/Channel.js` da lib mas
+   * sem contrato de nomes garantido). Lidos defensivamente com nomes
+   * alternativos; ausência não quebra, só deixa o campo `undefined`.
+   */
+  /**
+   * Ordem de fallback confirmada contra um dump real do próprio mantenedor da
+   * lib (descrição do PR wwebjs/whatsapp-web.js#2620) + uso direto de
+   * `membershipType` no código-fonte atual (`Utils.js`,
+   * `subscribeToUnsubscribeFromChannel`) — `size`/`membershipType`/
+   * `inviteCode`/`verified` são os nomes reais; os demais ficam como
+   * fallback pra caso o objeto (opaco, vem do bundle interno do WhatsApp
+   * Web) tenha mudado desde o dump (2023). `WAMUX_DEBUG_NEWSLETTER=true`
+   * loga o objeto cru uma vez por chamada pra validar contra um canal real.
+   */
+  private toNewsletter(c: Channel): NewsletterInfo {
+    const meta =
+      (c as unknown as { channelMetadata?: Record<string, unknown> }).channelMetadata ?? {};
+    if (process.env.WAMUX_DEBUG_NEWSLETTER === 'true') {
+      // eslint-disable-next-line no-console
+      console.debug(`[webjs][channelMetadata] ${JSON.stringify(meta)}`);
+    }
+    const subscriberCount = (meta.size ?? meta.subscribersCount ?? meta.subscriberCount) as
+      number | undefined;
+    const role = (meta.membershipType ?? meta.role) as NewsletterInfo['role'] | undefined;
+    const inviteCode = (meta.inviteCode ?? meta.inviteLink ?? meta.invite) as string | undefined;
+    const verified = (meta.verified ?? meta.isVerified) as boolean | undefined;
+    return {
+      jid: c.id._serialized,
+      name: c.name,
+      description: c.description || undefined,
+      subscriberCount,
+      role,
+      muted: c.isMuted,
+      inviteCode,
+      verified,
+    };
   }
 
   private async getGroupChat(jid: string): Promise<GroupChat> {

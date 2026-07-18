@@ -10,6 +10,9 @@ FROM node:22-alpine AS build
 RUN corepack enable && corepack prepare pnpm@11.4.0 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc turbo.json ./
+# patches/ precisa estar presente antes do install — pnpm-workspace.yaml referencia
+# os .patch por caminho relativo (patchedDependencies: baileys, whatsapp-web.js).
+COPY patches/ patches/
 COPY packages/config/package.json packages/config/
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/

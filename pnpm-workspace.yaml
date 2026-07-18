@@ -1,6 +1,6 @@
 packages:
-  - "apps/*"
-  - "packages/*"
+  - 'apps/*'
+  - 'packages/*'
 
 # Baileys depende de `libsignal` via git; o pnpm 11 bloqueia subdeps git por
 # padrão. Liberamos para permitir a instalação.
@@ -9,11 +9,15 @@ blockExoticSubdeps: false
 # Scripts de build (postinstall) permitidos. puppeteer=false → NÃO baixa o
 # Chromium no install (usamos o binário da imagem Docker via PUPPETEER_*).
 allowBuilds:
-  "@nestjs/core": true
+  '@nestjs/core': true
   # @scarf/scarf é telemetria (via @nestjs/swagger) — NÃO roda o postinstall.
-  "@scarf/scarf": false
+  '@scarf/scarf': false
   baileys: true
   esbuild: true
   msgpackr-extract: true
   protobufjs: true
   puppeteer: false
+
+patchedDependencies:
+  baileys@7.0.0-rc13: patches/baileys@7.0.0-rc13.patch
+  whatsapp-web.js@1.34.7: patches/whatsapp-web.js@1.34.7.patch

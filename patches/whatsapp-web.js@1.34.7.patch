@@ -1,0 +1,17 @@
+diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
+index 540078a9d07b3df07ccd51b030556a72af4cf650..54bd3c279712da747d39edd83ee0e0fc16791f44 100644
+--- a/src/util/Injected/Utils.js
++++ b/src/util/Injected/Utils.js
+@@ -515,7 +515,11 @@ exports.LoadUtils = () => {
+                     newsletterJid: chat.id.toJid(),
+                     ...(isMedia
+                         ? {
+-                              mediaMetadata: msg.avParams(),
++                              // WAMux patch (upstream PR #201824, unmerged): msg.avParams()
++                              // quebrou com mudança no bundle interno do WhatsApp Web.
++                              mediaMetadata: window
++                                  .require('WAWebMediaMetadata')
++                                  .mediaMetadata(msg),
+                               mediaHandle: isMedia
+                                   ? mediaOptions.mediaHandle
+                                   : null,

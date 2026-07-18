@@ -17,6 +17,8 @@ import {
   CommunityInviteProbeResult,
   UpdateCommunityImageInput,
   ProfileInfo,
+  NewsletterInfo,
+  CreateNewsletterInput,
   Label,
   LabelTarget,
   MessageAckStatus,
@@ -25,6 +27,7 @@ import {
   PortableCredentials,
   ProviderType,
   SendMediaInput,
+  SendPollInput,
   SendResult,
   SendTextInput,
   UpsertLabelInput,
@@ -71,7 +74,28 @@ export class WhatsmeowProvider extends BaseProvider {
    * em vez de fingir suporte (ver comentários em cada um e
    * `docs/community-contract-handoff.md`).
    */
-  readonly capabilities = { groups: true, labels: true, communities: true, profile: true };
+  readonly capabilities = {
+    groups: true,
+    labels: true,
+    communities: true,
+    profile: true,
+    newsletter: true,
+    // Cablado no sidecar: SendMedia agora usa UploadNewsletter + SendRequestExtra.MediaHandle
+    // pra destinos @newsletter (sem criptografia, mesmo mecanismo documentado
+    // na própria lib go.mau.fi/whatsmeow). Ver docs/newsletter-contract-handoff.md.
+    newsletterMedia: true,
+    poll: true,
+    pollResults: false,
+    // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
+    // mas o servidor do WhatsApp REJEITA poll pra jid @newsletter — testado
+    // ao vivo (rodada 3) contra um canal real de teste: erro reproduzível
+    // "server returned error 479" nas 2 tentativas. `BuildPollCreation` +
+    // `SendMessage` genérico não tratam @newsletter como caso especial (ao
+    // contrário de SendMedia, que já tem o branch `isNewsletter` com
+    // `MediaHandle`) — gap real da lib go.mau.fi/whatsmeow, não do sidecar.
+    // Ver docs/newsletter-contract-handoff.md.
+    newsletterPoll: false,
+  };
 
   async initialize(): Promise<void> {
     await this.ensureProvisioned();
@@ -312,6 +336,17 @@ export class WhatsmeowProvider extends BaseProvider {
       file_name: input.filename,
       mime_type: input.mimetype,
       reply_to: input.quotedMessageId,
+    });
+    return this.result(res.data, input.to);
+  }
+
+  /** `POST /message/poll` já existe no sidecar (`BuildPollCreation` da lib — sem upload, sem TOS, qualquer destino incl. `@newsletter`). */
+  async sendPoll(input: SendPollInput): Promise<SendResult> {
+    const res = await this.client().post('/message/poll', {
+      to: this.toJid(input.to),
+      question: input.question,
+      options: input.options,
+      max_selections: input.selectableCount ?? 1,
     });
     return this.result(res.data, input.to);
   }
@@ -890,6 +925,76 @@ export class WhatsmeowProvider extends BaseProvider {
     });
   }
 
+  // ── canais/newsletter (via sidecar Go) ────────────────
+  // `GET/POST /newsletter[...]` já existe no sidecar (`internal/handler/newsletter_handler.go`
+  // → `Client.{List,Create,...}Newsletter`), usando o `newsletter.go` nativo da
+  // lib go.mau.fi/whatsmeow. Pass-through direto, mesmo padrão de grupos/etiquetas.
+
+  async listNewsletters(): Promise<NewsletterInfo[]> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get('/newsletter');
+      const list = (res.data?.newsletters ?? []) as GoNewsletterInfo[];
+      return list.map((n) => this.toNewsletter(n));
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async newsletterMetadata(jid: string): Promise<NewsletterInfo> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().get(`/newsletter/${encodeURIComponent(jid)}`);
+      return this.toNewsletter(res.data as GoNewsletterInfo);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async createNewsletter(input: CreateNewsletterInput): Promise<NewsletterInfo> {
+    try {
+      await this.ensureProvisioned();
+      const res = await this.client().post('/newsletter', {
+        name: input.name,
+        description: input.description,
+      });
+      return this.toNewsletter(res.data as GoNewsletterInfo);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async followNewsletter(jid: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().post(`/newsletter/${encodeURIComponent(jid)}/follow`);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  async unfollowNewsletter(jid: string): Promise<void> {
+    try {
+      await this.ensureProvisioned();
+      await this.client().delete(`/newsletter/${encodeURIComponent(jid)}/follow`);
+    } catch (e) {
+      throw new Error(this.goError(e));
+    }
+  }
+
+  private toNewsletter(n: GoNewsletterInfo): NewsletterInfo {
+    return {
+      jid: n.jid,
+      name: n.name,
+      description: n.description || undefined,
+      subscriberCount: n.subscriber_count,
+      role: (n.role || undefined) as NewsletterInfo['role'],
+      muted: n.muted,
+      inviteCode: n.invite_code || undefined,
+      pictureUrl: n.picture_url || undefined,
+    };
+  }
+
   // ── perfil (via sidecar Go) ───────────────────────────
   // `GET /profile` já existe no sidecar (`internal/handler/profile_handler.go`
   // → `Client.GetProfile()`): pushName do store, status via `GetUserInfo`, foto
@@ -1172,4 +1277,14 @@ interface GoInviteLinkResult {
   jid: string;
   name: string;
   link: string;
+}
+interface GoNewsletterInfo {
+  jid: string;
+  name: string;
+  description?: string;
+  subscriber_count: number;
+  role?: string;
+  muted: boolean;
+  invite_code?: string;
+  picture_url?: string;
 }

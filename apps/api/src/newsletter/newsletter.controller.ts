@@ -1,17 +1,9 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Param,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
 import { NewsletterService } from './newsletter.service';
 import { CreateNewsletterDto } from './dto/create-newsletter.dto';
+import { SendNewsletterMessageDto } from './dto/send-newsletter-message.dto';
 
 @ApiTags('Canais (Newsletter)')
 @ApiSecurity('apikey')
@@ -50,5 +42,17 @@ export class NewsletterController {
   @ApiOperation({ summary: 'Deixa de seguir um canal.' })
   unfollow(@Param('id') id: string, @Param('jid') jid: string) {
     return this.svc.unfollow(id, jid);
+  }
+
+  @Post(':jid/message')
+  @ApiOperation({
+    summary: 'Publica no canal (texto sempre; mídia só se capabilities.newsletterMedia).',
+  })
+  sendMessage(
+    @Param('id') id: string,
+    @Param('jid') jid: string,
+    @Body() dto: SendNewsletterMessageDto,
+  ) {
+    return this.svc.sendMessage(id, jid, dto);
   }
 }

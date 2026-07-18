@@ -198,6 +198,7 @@ func main() {
 	messageHandler := handler.NewMessageHandler(manager, msgQueue)
 	groupHandler := handler.NewGroupHandler(manager)
 	labelHandler := handler.NewLabelHandler(manager)
+	newsletterHandler := handler.NewNewsletterHandler(manager)
 	profileHandler := handler.NewProfileHandler(manager)
 	chatHandler := handler.NewChatHandler(manager, chatStore)
 
@@ -336,6 +337,14 @@ func main() {
 	labelGroup.Put("/:id/chat", labelHandler.SetChat)
 	labelGroup.Get("/:id/chats", labelHandler.Chats)
 	api.Get("/chat-labels/:jid", middleware.APIKeyAuth(instanceRepo), labelHandler.ChatLabels)
+
+	// Newsletters / Channels (Instance API Key)
+	newsletterGroup := api.Group("/newsletter", middleware.APIKeyAuth(instanceRepo))
+	newsletterGroup.Get("/", newsletterHandler.List)
+	newsletterGroup.Post("/", newsletterHandler.Create)
+	newsletterGroup.Get("/:jid", newsletterHandler.Metadata)
+	newsletterGroup.Post("/:jid/follow", newsletterHandler.Follow)
+	newsletterGroup.Delete("/:jid/follow", newsletterHandler.Unfollow)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)

@@ -4,6 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  baileys@7.0.0-rc13: 8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25
+  whatsapp-web.js@1.34.7: 457474fddc58457aeb2c97934b90fa72255d18cb77fe8be5fc94400c9b06cba8
+
 importers:
 
   .:
@@ -79,7 +83,7 @@ importers:
         version: 1.18.1
       baileys:
         specifier: 7.0.0-rc13
-        version: 7.0.0-rc13(sharp@0.35.3(@types/node@22.20.0))
+        version: 7.0.0-rc13(patch_hash=8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25)(sharp@0.35.3(@types/node@22.20.0))
       bullmq:
         specifier: ^5.19.0
         version: 5.79.2
@@ -136,7 +140,7 @@ importers:
         version: 0.12.5
       whatsapp-web.js:
         specifier: ^1.26.0
-        version: 1.34.7(typescript@5.9.3)
+        version: 1.34.7(patch_hash=457474fddc58457aeb2c97934b90fa72255d18cb77fe8be5fc94400c9b06cba8)(typescript@5.9.3)
       ws:
         specifier: ^8.21.0
         version: 8.21.0
@@ -7873,7 +7877,7 @@ snapshots:
 
   b4a@1.8.1: {}
 
-  baileys@7.0.0-rc13(sharp@0.35.3(@types/node@22.20.0)):
+  baileys@7.0.0-rc13(patch_hash=8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25)(sharp@0.35.3(@types/node@22.20.0)):
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4
@@ -11440,7 +11444,7 @@ snapshots:
 
   whatsapp-rust-bridge@0.5.4: {}
 
-  whatsapp-web.js@1.34.7(typescript@5.9.3):
+  whatsapp-web.js@1.34.7(patch_hash=457474fddc58457aeb2c97934b90fa72255d18cb77fe8be5fc94400c9b06cba8)(typescript@5.9.3):
     dependencies:
       fluent-ffmpeg: 2.1.3
       mime: 3.0.0

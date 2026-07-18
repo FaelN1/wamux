@@ -24,6 +24,12 @@ export interface ProviderCapabilities {
   media?: boolean;
   /** canais (@newsletter). */
   newsletter?: boolean;
+  /** envio de mídia em canal — separado de `newsletter` porque é instável/incompleto a montante em mais de uma engine (ver docs/newsletter-contract-handoff.md). */
+  newsletterMedia?: boolean;
+  /** tipos de mídia que a engine NÃO aceita em canal mesmo com `newsletterMedia: true` (limitação estrutural pontual, ex.: document no webjs). */
+  newsletterUnsupportedMediaTypes?: Array<'image' | 'video' | 'audio' | 'document' | 'sticker'>;
+  /** envio de enquete em canal. */
+  newsletterPoll?: boolean;
   /** gerência de grupos (criar, participantes, admins, assunto, convite). */
   groups?: boolean;
   /** gerência de comunidades (grupo-pai + subgrupos vinculados). */

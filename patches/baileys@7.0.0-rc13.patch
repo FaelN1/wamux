@@ -1,0 +1,121 @@
+diff --git a/lib/Defaults/index.js b/lib/Defaults/index.js
+index ef165787319adbe10363966226acb06d1374359c..27d8c893880a71eb5bfcae07b07592eb8b1fa959 100644
+--- a/lib/Defaults/index.js
++++ b/lib/Defaults/index.js
+@@ -93,6 +93,19 @@ export const MEDIA_PATH_MAP = {
+     'md-msg-hist': '/mms/md-app-state',
+     'biz-cover-photo': '/pps/biz-cover-photo'
+ };
++// WAMux patch (upstream PR #2434, unmerged): comunidade confirmou "tested and
++// working" — newsletters usam paths de upload dedicados, não os /mms/* normais.
++export const NEWSLETTER_MEDIA_PATH_MAP = {
++    image: '/newsletter/newsletter-image',
++    video: '/newsletter/newsletter-video',
++    document: '/newsletter/newsletter-document',
++    audio: '/newsletter/newsletter-audio',
++    gif: '/newsletter/newsletter-gif',
++    ptt: '/newsletter/newsletter-ptt',
++    ptv: '/newsletter/newsletter-ptv',
++    sticker: '/newsletter/newsletter-sticker-pack',
++    'thumbnail-link': '/newsletter/newsletter-image'
++};
+ export const MEDIA_HKDF_KEY_MAPPING = {
+     audio: 'Audio',
+     document: 'Document',
+diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
+index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..64e80549182bfdb5ddaebcb185b246bbc46b84c7 100644
+--- a/lib/Socket/messages-send.js
++++ b/lib/Socket/messages-send.js
+@@ -475,7 +475,7 @@ export const makeMessagesSocket = (config) => {
+                 const bytes = encodeNewsletterMessage(patched);
+                 binaryNodeContent.push({
+                     tag: 'plaintext',
+-                    attrs: {},
++                    attrs: mediaType ? { mediatype: mediaType } : {},
+                     content: bytes
+                 });
+                 const stanza = {
+diff --git a/lib/Utils/messages-media.js b/lib/Utils/messages-media.js
+index a3d2fa6bae6af021a4a50b4270584fed08623f34..55f9e09c7bcfac1bfc08004370d905d413cd704e 100644
+--- a/lib/Utils/messages-media.js
++++ b/lib/Utils/messages-media.js
+@@ -8,7 +8,7 @@ import { join } from 'path';
+ import { Readable, Transform } from 'stream';
+ import { URL } from 'url';
+ import { proto } from '../../WAProto/index.js';
+-import { DEFAULT_ORIGIN, MEDIA_HKDF_KEY_MAPPING, MEDIA_PATH_MAP } from '../Defaults/index.js';
++import { DEFAULT_ORIGIN, MEDIA_HKDF_KEY_MAPPING, MEDIA_PATH_MAP, NEWSLETTER_MEDIA_PATH_MAP } from '../Defaults/index.js';
+ import { getBinaryNodeChild, getBinaryNodeChildBuffer, jidNormalizedUser } from '../WABinary/index.js';
+ import { aesDecryptGCM, aesEncryptGCM, hkdf } from './crypto.js';
+ import { generateMessageIDV2 } from './generics.js';
+@@ -641,7 +641,7 @@ const uploadMedia = async (params, logger) => {
+     }
+ };
+ export const getWAUploadToServer = ({ customUploadHosts, fetchAgent, logger, options }, refreshMediaConn) => {
+-    return async (filePath, { mediaType, fileEncSha256B64, timeoutMs }) => {
++    return async (filePath, { mediaType, fileEncSha256B64, timeoutMs, newsletter }) => {
+         // send a query JSON to obtain the url & auth token to upload our media
+         let uploadInfo = await refreshMediaConn(false);
+         let urls;
+@@ -662,7 +662,14 @@ export const getWAUploadToServer = ({ customUploadHosts, fetchAgent, logger, opt
+         for (const { hostname } of hosts) {
+             logger.debug(`uploading to "${hostname}"`);
+             const auth = encodeURIComponent(uploadInfo.auth);
+-            const url = `https://${hostname}${MEDIA_PATH_MAP[mediaType]}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`;
++            const mediaPath = (newsletter ? NEWSLETTER_MEDIA_PATH_MAP[mediaType] : undefined) || MEDIA_PATH_MAP[mediaType];
++            let url = `https://${hostname}${mediaPath}/${fileEncSha256B64}?auth=${auth}&token=${fileEncSha256B64}`;
++            if (newsletter) {
++                url += '&server_thumb_gen=1';
++                if (mediaType === 'video' || mediaType === 'gif' || mediaType === 'ptv') {
++                    url += '&server_transcode=1';
++                }
++            }
+             let result;
+             try {
+                 result = await uploadMedia({
+@@ -674,11 +681,13 @@ export const getWAUploadToServer = ({ customUploadHosts, fetchAgent, logger, opt
+                 }, logger);
+                 if (result?.url || result?.direct_path) {
+                     urls = {
+-                        mediaUrl: result.url,
++                        mediaUrl: result.url || result.direct_path,
+                         directPath: result.direct_path,
+                         meta_hmac: result.meta_hmac,
+                         fbid: result.fbid,
+-                        ts: result.ts
++                        ts: result.ts,
++                        thumbnailDirectPath: result.thumbnail_info?.thumbnail_direct_path,
++                        thumbnailSha256: result.thumbnail_info?.thumbnail_sha256
+                     };
+                     break;
+                 }
+diff --git a/lib/Utils/messages.js b/lib/Utils/messages.js
+index 247b1f12d912923d4ad032e6572fc76cd958e51b..e353dee918753caea859c93ea83c727c9c60aec8 100644
+--- a/lib/Utils/messages.js
++++ b/lib/Utils/messages.js
+@@ -101,19 +101,22 @@ export const prepareWAMessageMedia = async (message, options) => {
+         logger?.info({ key: cacheableKey }, 'Preparing raw media for newsletter');
+         const { filePath, fileSha256, fileLength } = await getRawMediaUploadData(uploadData.media, options.mediaTypeOverride || mediaType, logger);
+         const fileSha256B64 = fileSha256.toString('base64');
+-        const { mediaUrl, directPath } = await options.upload(filePath, {
++        const { directPath, thumbnailDirectPath, thumbnailSha256 } = await options.upload(filePath, {
+             fileEncSha256B64: fileSha256B64,
+             mediaType: mediaType,
+-            timeoutMs: options.mediaUploadTimeoutMs
++            timeoutMs: options.mediaUploadTimeoutMs,
++            newsletter: true
+         });
+         await fs.unlink(filePath);
+         const obj = WAProto.Message.fromObject({
+             // todo: add more support here
+             [`${mediaType}Message`]: MessageTypeProto[mediaType].fromObject({
+-                url: mediaUrl,
++                // url intentionally omitted — newsletters usam só directPath (não criptografado)
+                 directPath,
+                 fileSha256,
+                 fileLength,
++                thumbnailDirectPath,
++                thumbnailSha256: thumbnailSha256 ? Buffer.from(thumbnailSha256, 'base64') : undefined,
+                 ...uploadData,
+                 media: undefined
+             })

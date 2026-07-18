@@ -305,6 +305,18 @@ func (c *Client) SendMediaBytes(to string, mediaData []byte, mediaType, mimeType
 	return resp.ID, nil
 }
 
+// uploadForSend uploads media data to WhatsApp servers, choosing between the
+// normal encrypted chat-media path (Upload) and the unencrypted newsletter
+// media path (UploadNewsletter) based on isNewsletter. Newsletter content is
+// public/broadcast, so it isn't encrypted and doesn't get a MediaKey /
+// FileEncSHA256 — see the UploadNewsletter doc comment in the whatsmeow lib.
+func (c *Client) uploadForSend(ctx context.Context, data []byte, mediaType whatsmeow.MediaType, isNewsletter bool) (whatsmeow.UploadResponse, error) {
+	if isNewsletter {
+		return c.WAClient.UploadNewsletter(ctx, data, mediaType)
+	}
+	return c.WAClient.Upload(ctx, data, mediaType)
+}
+
 func (c *Client) SendMedia(req MediaRequest) (string, error) {
 	ctx, cancel := waCtx()
 	defer cancel()
@@ -318,80 +330,91 @@ func (c *Client) SendMedia(req MediaRequest) (string, error) {
 		return "", fmt.Errorf("failed to download media: %w", err)
 	}
 
+	isNewsletter := jid.Server == types.NewsletterServer
+
 	var msg *waE2E.Message
+	var mediaHandle string
 
 	switch req.Type {
 	case "image":
-		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaImage)
+		uploaded, err := c.uploadForSend(ctx, mediaData, whatsmeow.MediaImage, isNewsletter)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload image: %w", err)
 		}
-		msg = &waE2E.Message{
-			ImageMessage: &waE2E.ImageMessage{
-				URL:           proto.String(uploaded.URL),
-				DirectPath:    proto.String(uploaded.DirectPath),
-				MediaKey:      uploaded.MediaKey,
-				Mimetype:      proto.String(req.MimeType),
-				Caption:       proto.String(req.Caption),
-				FileEncSHA256: uploaded.FileEncSHA256,
-				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
-			},
+		mediaHandle = uploaded.Handle
+		imageMsg := &waE2E.ImageMessage{
+			URL:        proto.String(uploaded.URL),
+			DirectPath: proto.String(uploaded.DirectPath),
+			Mimetype:   proto.String(req.MimeType),
+			Caption:    proto.String(req.Caption),
+			FileSHA256: uploaded.FileSHA256,
+			FileLength: proto.Uint64(uint64(len(mediaData))),
 		}
+		if !isNewsletter {
+			imageMsg.MediaKey = uploaded.MediaKey
+			imageMsg.FileEncSHA256 = uploaded.FileEncSHA256
+		}
+		msg = &waE2E.Message{ImageMessage: imageMsg}
 
 	case "video":
-		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaVideo)
+		uploaded, err := c.uploadForSend(ctx, mediaData, whatsmeow.MediaVideo, isNewsletter)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload video: %w", err)
 		}
-		msg = &waE2E.Message{
-			VideoMessage: &waE2E.VideoMessage{
-				URL:           proto.String(uploaded.URL),
-				DirectPath:    proto.String(uploaded.DirectPath),
-				MediaKey:      uploaded.MediaKey,
-				Mimetype:      proto.String(req.MimeType),
-				Caption:       proto.String(req.Caption),
-				FileEncSHA256: uploaded.FileEncSHA256,
-				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
-			},
+		mediaHandle = uploaded.Handle
+		videoMsg := &waE2E.VideoMessage{
+			URL:        proto.String(uploaded.URL),
+			DirectPath: proto.String(uploaded.DirectPath),
+			Mimetype:   proto.String(req.MimeType),
+			Caption:    proto.String(req.Caption),
+			FileSHA256: uploaded.FileSHA256,
+			FileLength: proto.Uint64(uint64(len(mediaData))),
 		}
+		if !isNewsletter {
+			videoMsg.MediaKey = uploaded.MediaKey
+			videoMsg.FileEncSHA256 = uploaded.FileEncSHA256
+		}
+		msg = &waE2E.Message{VideoMessage: videoMsg}
 
 	case "audio":
-		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaAudio)
+		uploaded, err := c.uploadForSend(ctx, mediaData, whatsmeow.MediaAudio, isNewsletter)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload audio: %w", err)
 		}
-		msg = &waE2E.Message{
-			AudioMessage: &waE2E.AudioMessage{
-				URL:           proto.String(uploaded.URL),
-				DirectPath:    proto.String(uploaded.DirectPath),
-				MediaKey:      uploaded.MediaKey,
-				Mimetype:      proto.String(req.MimeType),
-				FileEncSHA256: uploaded.FileEncSHA256,
-				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
-			},
+		mediaHandle = uploaded.Handle
+		audioMsg := &waE2E.AudioMessage{
+			URL:        proto.String(uploaded.URL),
+			DirectPath: proto.String(uploaded.DirectPath),
+			Mimetype:   proto.String(req.MimeType),
+			FileSHA256: uploaded.FileSHA256,
+			FileLength: proto.Uint64(uint64(len(mediaData))),
 		}
+		if !isNewsletter {
+			audioMsg.MediaKey = uploaded.MediaKey
+			audioMsg.FileEncSHA256 = uploaded.FileEncSHA256
+		}
+		msg = &waE2E.Message{AudioMessage: audioMsg}
 
 	case "document":
-		uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaDocument)
+		uploaded, err := c.uploadForSend(ctx, mediaData, whatsmeow.MediaDocument, isNewsletter)
 		if err != nil {
 			return "", fmt.Errorf("failed to upload document: %w", err)
 		}
-		msg = &waE2E.Message{
-			DocumentMessage: &waE2E.DocumentMessage{
-				URL:           proto.String(uploaded.URL),
-				DirectPath:    proto.String(uploaded.DirectPath),
-				MediaKey:      uploaded.MediaKey,
-				Mimetype:      proto.String(req.MimeType),
-				Caption:       proto.String(req.Caption),
-				FileName:      proto.String(req.FileName),
-				FileEncSHA256: uploaded.FileEncSHA256,
-				FileSHA256:    uploaded.FileSHA256,
-				FileLength:    proto.Uint64(uint64(len(mediaData))),
-			},
+		mediaHandle = uploaded.Handle
+		documentMsg := &waE2E.DocumentMessage{
+			URL:        proto.String(uploaded.URL),
+			DirectPath: proto.String(uploaded.DirectPath),
+			Mimetype:   proto.String(req.MimeType),
+			Caption:    proto.String(req.Caption),
+			FileName:   proto.String(req.FileName),
+			FileSHA256: uploaded.FileSHA256,
+			FileLength: proto.Uint64(uint64(len(mediaData))),
 		}
+		if !isNewsletter {
+			documentMsg.MediaKey = uploaded.MediaKey
+			documentMsg.FileEncSHA256 = uploaded.FileEncSHA256
+		}
+		msg = &waE2E.Message{DocumentMessage: documentMsg}
 
 	default:
 		return "", fmt.Errorf("unsupported media type: %s", req.Type)
@@ -401,7 +424,12 @@ func (c *Client) SendMedia(req MediaRequest) (string, error) {
 		setContextInfo(msg, req.ReplyTo)
 	}
 
-	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	var extra []whatsmeow.SendRequestExtra
+	if isNewsletter {
+		extra = append(extra, whatsmeow.SendRequestExtra{MediaHandle: mediaHandle})
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg, extra...)
 	if err != nil {
 		return "", fmt.Errorf("failed to send media: %w", err)
 	}
@@ -1405,4 +1433,143 @@ func parseColor(hex string) uint32 {
 		fmt.Sscanf(hex, "#%02x%02x%02x", &r, &g, &b)
 	}
 	return uint32(0xFF)<<24 | uint32(r)<<16 | uint32(g)<<8 | uint32(b)
+}
+
+// ── Newsletters / Channels ──────────────────────────────────────
+
+type NewsletterInfo struct {
+	JID             string `json:"jid"`
+	Name            string `json:"name"`
+	Description     string `json:"description,omitempty"`
+	SubscriberCount int    `json:"subscriber_count"`
+	Role            string `json:"role,omitempty"`
+	Muted           bool   `json:"muted"`
+	InviteCode      string `json:"invite_code,omitempty"`
+	PictureURL      string `json:"picture_url,omitempty"`
+}
+
+// newsletterInfoToResponse maps a whatsmeow NewsletterMetadata into the
+// sidecar's public NewsletterInfo response shape.
+func newsletterInfoToResponse(n *types.NewsletterMetadata) NewsletterInfo {
+	info := NewsletterInfo{
+		JID:             n.ID.String(),
+		Name:            n.ThreadMeta.Name.Text,
+		Description:     n.ThreadMeta.Description.Text,
+		SubscriberCount: n.ThreadMeta.SubscriberCount,
+		InviteCode:      n.ThreadMeta.InviteCode,
+	}
+	if n.ThreadMeta.Picture != nil {
+		info.PictureURL = n.ThreadMeta.Picture.URL
+	}
+	if n.ViewerMeta != nil {
+		info.Role = string(n.ViewerMeta.Role)
+		info.Muted = n.ViewerMeta.Mute == types.NewsletterMuteOn
+	}
+	return info
+}
+
+// ListNewsletters returns all newsletters (channels) the user is subscribed to.
+func (c *Client) ListNewsletters() ([]NewsletterInfo, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	newsletters, err := c.WAClient.GetSubscribedNewsletters(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list newsletters: %w", err)
+	}
+
+	result := make([]NewsletterInfo, 0, len(newsletters))
+	for _, n := range newsletters {
+		result = append(result, newsletterInfoToResponse(n))
+	}
+	return result, nil
+}
+
+// NewsletterMetadata fetches info about a single newsletter by JID.
+func (c *Client) NewsletterMetadata(jidStr string) (*NewsletterInfo, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
+
+	n, err := c.WAClient.GetNewsletterInfo(ctx, jid)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get newsletter info: %w", err)
+	}
+
+	info := newsletterInfoToResponse(n)
+	return &info, nil
+}
+
+// CreateNewsletter creates a new WhatsApp channel. The newsletter-creation
+// ToS notice is accepted proactively (best-effort, error ignored — it's an
+// idempotent per-account acceptance, so calling it again when already
+// accepted is harmless) before the first attempt. If the account has never
+// created a channel before and the server still rejects the first attempt,
+// this falls back to a reactive accept + single retry — see the
+// AcceptTOSNotice doc comment upstream.
+func (c *Client) CreateNewsletter(name, description string) (*NewsletterInfo, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	params := whatsmeow.CreateNewsletterParams{
+		Name:        name,
+		Description: description,
+	}
+
+	tosCtx, tosCancel := waCtx()
+	_ = c.WAClient.AcceptTOSNotice(tosCtx, "20601218", "5")
+	tosCancel()
+
+	n, err := c.WAClient.CreateNewsletter(ctx, params)
+	if err != nil {
+		retryTosCtx, retryTosCancel := waCtx()
+		_ = c.WAClient.AcceptTOSNotice(retryTosCtx, "20601218", "5")
+		retryTosCancel()
+
+		retryCtx, retryCancel := waCtx()
+		n, err = c.WAClient.CreateNewsletter(retryCtx, params)
+		retryCancel()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create newsletter: %w", err)
+		}
+	}
+
+	info := newsletterInfoToResponse(n)
+	return &info, nil
+}
+
+// FollowNewsletter subscribes the user to a WhatsApp channel.
+func (c *Client) FollowNewsletter(jidStr string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	if err := c.WAClient.FollowNewsletter(ctx, jid); err != nil {
+		return fmt.Errorf("failed to follow newsletter: %w", err)
+	}
+	return nil
+}
+
+// UnfollowNewsletter unsubscribes the user from a WhatsApp channel.
+func (c *Client) UnfollowNewsletter(jidStr string) error {
+	ctx, cancel := waCtx()
+	defer cancel()
+
+	jid, err := parseJID(jidStr)
+	if err != nil {
+		return err
+	}
+
+	if err := c.WAClient.UnfollowNewsletter(ctx, jid); err != nil {
+		return fmt.Errorf("failed to unfollow newsletter: %w", err)
+	}
+	return nil
 }

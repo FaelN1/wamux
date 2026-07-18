@@ -1,7 +1,7 @@
 import * as QRCode from 'qrcode';
 import pino, { Logger as PinoLogger } from 'pino';
 import { ProxyAgent } from 'proxy-agent';
-import type { AnyMessageContent, WAMessage, WASocket } from 'baileys';
+import type { AnyMessageContent, BinaryNode, WAMessage, WASocket } from 'baileys';
 import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext, QrPayload } from '../provider.interface';
 import { classifyJid } from '../jid.util';
@@ -73,6 +73,15 @@ export class BaileysProvider extends BaseProvider {
     markRead: true,
     media: true,
     newsletter: true,
+    // Bug a montante (#2687/#2199) corrigido via patch local em
+    // patches/baileys@7.0.0-rc13.patch (PR #WhiskeySockets/Baileys#2434,
+    // não mergeado — testado "working" por 3 usuários independentes).
+    // Ver docs/newsletter-contract-handoff.md.
+    newsletterMedia: true,
+    // Validado ao vivo (rodada 3) contra um canal real de teste (owned pela
+    // conta de QA) — POST /:jid/message com poll voltou 201/sent, sem erro
+    // nos logs. Ver docs/newsletter-contract-handoff.md.
+    newsletterPoll: true,
     groups: true,
     communities: true,
     profile: true,
@@ -653,13 +662,61 @@ export class BaileysProvider extends BaseProvider {
 
   // ── newsletter / canais ───────────────────────────
 
+  /**
+   * A lib não expõe NENHUM método público de listagem/diretório de canais
+   * (só create/metadata-por-jid/follow/etc. — confirmado lendo `newsletter.js`
+   * inteiro: zero `QueryIds`/`XWAPaths` de "listar", zero evento de bootstrap
+   * tipo `newsletters.set`). `getSubscribedNewsletters` (usado aqui antes)
+   * nunca existiu nesta lib — sempre devolvia `[]` silenciosamente. A forma
+   * real de listar, confirmada por um contribuidor da lib apontando pro
+   * código-fonte de verdade (WhiskeySockets/Baileys#1631), é uma query WMex
+   * crua com um `query_id` não documentado/não exposto como constante
+   * (`xwa2_newsletter_subscribed`) — mesmo mecanismo interno que
+   * `newsletter.js` usa pra tudo, só que sem wrapper público. Como não é uma
+   * API oficial, o `query_id` pode ficar obsoleto se a Meta trocar o schema
+   * GraphQL (já aconteceu com outros — ver diferença de `FOLLOW`/`UNFOLLOW`
+   * entre versões nos comentários da issue); se passar a falhar com erro de
+   * "unknown query"/GraphQL, é isso.
+   */
   async listNewsletters(): Promise<NewsletterInfo[]> {
-    const sock = this.socket() as WASocket & {
-      getSubscribedNewsletters?: () => Promise<Array<Record<string, unknown>>>;
+    const raw = await this.fetchSubscribedNewsletters();
+    const list = raw.map((n) => this.toNewsletter(n));
+    await this.attachPictureUrls(list);
+    return list;
+  }
+
+  private async fetchSubscribedNewsletters(): Promise<Record<string, unknown>[]> {
+    const sock = this.socket();
+    const B = this.B as unknown as {
+      getBinaryNodeChild: (node: unknown, tag: string) => { content?: Buffer } | undefined;
     };
-    if (!sock.getSubscribedNewsletters) return [];
-    const list = await sock.getSubscribedNewsletters();
-    return list.map((n) => this.toNewsletter(n));
+    const result = await sock.query({
+      tag: 'iq',
+      attrs: { id: sock.generateMessageTag(), type: 'get', to: '@s.whatsapp.net', xmlns: 'w:mex' },
+      content: [
+        {
+          tag: 'query',
+          attrs: { query_id: '6388546374527196' },
+          content: Buffer.from(JSON.stringify({ variables: {} }), 'utf-8'),
+        },
+      ],
+    } as BinaryNode);
+    const child = B.getBinaryNodeChild(result, 'result');
+    if (!child?.content) return [];
+    const parsed = JSON.parse(child.content.toString()) as {
+      errors?: Array<{ message?: string }>;
+      data?: Record<string, unknown>;
+    };
+    if (parsed.errors?.length) {
+      throw new Error(
+        'Baileys: falha ao listar canais (query WMex não documentada, ver ' +
+          `comentário em listNewsletters) — ${parsed.errors.map((e) => e.message).join(', ')}`,
+      );
+    }
+    const payload = parsed.data?.xwa2_newsletter_subscribed;
+    if (Array.isArray(payload)) return payload as Record<string, unknown>[];
+    const nested = (payload as { newsletters?: unknown[] } | undefined)?.newsletters;
+    return Array.isArray(nested) ? (nested as Record<string, unknown>[]) : [];
   }
   async newsletterMetadata(jid: string): Promise<NewsletterInfo> {
     const sock = this.socket() as WASocket & {
@@ -669,7 +726,9 @@ export class BaileysProvider extends BaseProvider {
       string,
       unknown
     >;
-    return this.toNewsletter(meta);
+    const info = this.toNewsletter(meta);
+    info.pictureUrl = await this.fetchPictureUrl(info.jid);
+    return info;
   }
   async followNewsletter(jid: string): Promise<void> {
     await (
@@ -681,6 +740,14 @@ export class BaileysProvider extends BaseProvider {
       this.socket() as WASocket & { newsletterUnfollow?: (j: string) => Promise<void> }
     ).newsletterUnfollow?.(jid);
   }
+  /**
+   * Baileys não tem checagem de elegibilidade client-side (ao contrário do
+   * webjs, que checa `isNewsletterCreationEnabled()`, ou do whatsmeow, que
+   * tem `AcceptTOSNotice`) — quando a conta não pode criar canal, a lib só
+   * propaga o erro cru da query GraphQL da Meta ("Bad Request", sem detalhe).
+   * Sem workaround programático (ver docs/newsletter-contract-handoff.md) —
+   * só troca por uma mensagem de negócio acionável.
+   */
   async createNewsletter(input: CreateNewsletterInput): Promise<NewsletterInfo> {
     const sock = this.socket() as WASocket & {
       newsletterCreate?: (
@@ -688,8 +755,16 @@ export class BaileysProvider extends BaseProvider {
         opts: { description?: string },
       ) => Promise<Record<string, unknown>>;
     };
-    const res =
-      (await sock.newsletterCreate?.(input.name, { description: input.description })) ?? {};
+    let res: Record<string, unknown>;
+    try {
+      res = (await sock.newsletterCreate?.(input.name, { description: input.description })) ?? {};
+    } catch (err) {
+      throw new Error(
+        'Baileys: falha ao criar canal — a conta provavelmente ainda não está elegível para ' +
+          'criar canais no WhatsApp. Crie um canal manualmente pelo app oficial do WhatsApp ' +
+          `nesse número pelo menos uma vez antes de tentar de novo via API. (${(err as Error).message})`,
+      );
+    }
     return this.toNewsletter({ ...res, name: input.name, description: input.description });
   }
 
@@ -1112,12 +1187,42 @@ export class BaileysProvider extends BaseProvider {
     };
   }
 
+  /**
+   * A resposta real da API (confirmado em WhiskeySockets/Baileys#2204, com
+   * exemplo de payload real) vem ANINHADA (`thread_metadata.name.text`,
+   * `thread_metadata.subscribers_count` como STRING, `viewer_metadata.role`/
+   * `.mute`) — não achatada como o tipo `NewsletterMetadata` da lib declara.
+   * `parseNewsletterCreateResponse` (usado só em `createNewsletter`) já
+   * achata isso antes de chegar aqui; `newsletterMetadata`/a query crua de
+   * listagem não achatam — por isso os dois formatos são lidos aqui.
+   */
   private toNewsletter(n: Record<string, unknown>): NewsletterInfo {
+    const thread = (n.thread_metadata ?? n.threadMetadata) as Record<string, unknown> | undefined;
+    const viewer = (n.viewer_metadata ?? n.viewerMetadata) as Record<string, unknown> | undefined;
+    const name =
+      (n.name as string) || ((thread?.name as { text?: string } | undefined)?.text ?? '');
+    const description =
+      (n.description as string) ||
+      (thread?.description as { text?: string } | undefined)?.text ||
+      undefined;
+    const subscriberCountRaw = n.subscribers ?? n.subscriberCount ?? thread?.subscribers_count;
+    const subscriberCount =
+      typeof subscriberCountRaw === 'string'
+        ? parseInt(subscriberCountRaw, 10)
+        : (subscriberCountRaw as number | undefined);
+    const roleRaw = ((n.role as string) ?? (viewer?.role as string))?.toLowerCase();
+    const muteRaw = (n.mute_state as string) ?? (viewer?.mute as string);
+    const inviteCode = ((n.invite as string) || (thread?.invite as string)) ?? undefined;
+    const verificationRaw = (n.verification as string) ?? (thread?.verification as string);
     return {
       jid: String(n.id ?? n.jid ?? ''),
-      name: String((n.name as string) ?? (n.threadMetadata as { name?: string })?.name ?? ''),
-      description: (n.description as string) ?? undefined,
-      subscriberCount: (n.subscribers as number) ?? (n.subscriberCount as number) ?? undefined,
+      name,
+      description,
+      subscriberCount,
+      role: roleRaw as NewsletterInfo['role'],
+      muted: muteRaw ? muteRaw === 'ON' : undefined,
+      inviteCode: inviteCode || undefined,
+      verified: verificationRaw ? verificationRaw === 'VERIFIED' : undefined,
     };
   }
 

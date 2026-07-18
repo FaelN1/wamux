@@ -14,6 +14,9 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 # ── deps: instala só o subtree da api (+ shared) ──────
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc turbo.json ./
+# patches/ precisa estar presente antes do install — pnpm-workspace.yaml referencia
+# os .patch por caminho relativo (patchedDependencies: baileys, whatsapp-web.js).
+COPY patches/ patches/
 COPY packages/config/package.json packages/config/
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
