@@ -319,6 +319,25 @@ export interface SendPixInput {
   quotedMessageId?: string;
 }
 
+// ── ações sobre mensagens existentes (reagir/editar/apagar) ──
+
+/** Referência canônica a uma mensagem já existente num chat. */
+export interface MessageRef {
+  /** chat onde a mensagem está (jid ou número). */
+  chatId: string;
+  /** id da mensagem-alvo. */
+  messageId: string;
+  /** a mensagem-alvo foi enviada por nós? (default false). */
+  fromMe?: boolean;
+  /** em grupo: jid do autor da mensagem-alvo (algumas engines exigem). */
+  participant?: string;
+}
+
+export interface ReactMessageInput extends MessageRef {
+  /** emoji da reação; string vazia REMOVE a reação. */
+  emoji: string;
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

@@ -28,6 +28,7 @@ import {
   ProviderType,
   SendMediaInput,
   SendPollInput,
+  ReactMessageInput,
   SendResult,
   SendTextInput,
   UpsertLabelInput,
@@ -85,6 +86,7 @@ export class WhatsmeowProvider extends BaseProvider {
     // pra destinos @newsletter (sem criptografia, mesmo mecanismo documentado
     // na própria lib go.mau.fi/whatsmeow). Ver docs/newsletter-contract-handoff.md.
     newsletterMedia: true,
+    reactions: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -351,6 +353,18 @@ export class WhatsmeowProvider extends BaseProvider {
       question: input.question,
       options: input.options,
       max_selections: input.selectableCount ?? 1,
+    });
+    return this.result(res.data, jid);
+  }
+
+  async reactMessage(input: ReactMessageInput): Promise<SendResult> {
+    const jid = this.toJid(input.chatId);
+    const res = await this.client().post('/message/react', {
+      to: jid,
+      message_id: input.messageId,
+      emoji: input.emoji,
+      from_me: input.fromMe ?? false,
+      sender: input.participant ? this.toJid(input.participant) : undefined,
     });
     return this.result(res.data, jid);
   }

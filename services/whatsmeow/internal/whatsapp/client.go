@@ -480,6 +480,39 @@ func (c *Client) SendStatus(req StatusRequest) (string, error) {
 	return resp.ID, nil
 }
 
+// React reage a uma mensagem (emoji; string vazia remove a reação).
+func (c *Client) React(to, messageID, sender, emoji string, fromMe bool) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	chat, err := parseJID(to)
+	if err != nil {
+		return "", err
+	}
+
+	var senderJID types.JID
+	switch {
+	case fromMe:
+		if c.WAClient.Store.ID == nil {
+			return "", fmt.Errorf("client not logged in")
+		}
+		senderJID = *c.WAClient.Store.ID
+	case sender != "":
+		senderJID, err = parseJID(sender)
+		if err != nil {
+			return "", err
+		}
+	default:
+		senderJID = chat
+	}
+
+	reactMsg := c.WAClient.BuildReaction(chat, senderJID, messageID, emoji)
+	resp, err := c.WAClient.SendMessage(ctx, chat, reactMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to react: %w", err)
+	}
+	return resp.ID, nil
+}
+
 func (c *Client) DeleteMessages(to string, ids []string, forEveryone bool) (int, int, error) {
 	ctx, cancel := waCtx()
 	defer cancel()

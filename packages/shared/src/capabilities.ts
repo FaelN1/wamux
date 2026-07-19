@@ -40,6 +40,8 @@ export interface ProviderCapabilities {
   contactAvatar?: boolean;
   /** history sync (import de histórico). */
   history?: boolean;
+  /** reagir a uma mensagem (emoji). */
+  reactions?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

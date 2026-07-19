@@ -6,6 +6,7 @@ import {
   MessageType,
   NormalizedMessage,
   ProviderType,
+  ReactMessageInput,
   SendMediaInput,
   SendResult,
   SendTextInput,
@@ -23,6 +24,10 @@ import {
  */
 export class CloudApiProvider extends BaseProvider {
   readonly type = ProviderType.CLOUD_API;
+  /** A API oficial da Meta expõe reação/localização/contato, mas NÃO editar/apagar/status. */
+  readonly capabilities = {
+    reactions: true,
+  };
   private http!: AxiosInstance;
 
   constructor(ctx: ProviderContext) {
@@ -82,7 +87,10 @@ export class CloudApiProvider extends BaseProvider {
       throw new Error('Cloud API: informe "url" ou "base64" da mídia');
     }
 
-    if (input.caption && (input.type === 'image' || input.type === 'video' || input.type === 'document')) {
+    if (
+      input.caption &&
+      (input.type === 'image' || input.type === 'video' || input.type === 'document')
+    ) {
       media.caption = input.caption;
     }
     if (input.type === 'document' && input.filename) media.filename = input.filename;
@@ -101,11 +109,7 @@ export class CloudApiProvider extends BaseProvider {
    * Sobe uma mídia (base64) em /{phoneNumberId}/media (multipart) e retorna o
    * media id, que é então usado no envio da mensagem.
    */
-  private async uploadMedia(
-    base64: string,
-    mimetype?: string,
-    filename?: string,
-  ): Promise<string> {
+  private async uploadMedia(base64: string, mimetype?: string, filename?: string): Promise<string> {
     if (!mimetype) {
       throw new Error('Cloud API: "mimetype" é obrigatório no envio por base64');
     }
@@ -121,6 +125,18 @@ export class CloudApiProvider extends BaseProvider {
     const id = res.data?.id as string | undefined;
     if (!id) throw new Error('Cloud API: upload de mídia não retornou id');
     return id;
+  }
+
+  async reactMessage(input: ReactMessageInput): Promise<SendResult> {
+    const to = this.toNumber(input.chatId);
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'reaction',
+      reaction: { message_id: input.messageId, emoji: input.emoji },
+    });
+    return this.result(res.data, to);
   }
 
   async logout(): Promise<void> {

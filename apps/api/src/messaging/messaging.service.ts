@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  NotImplementedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -14,6 +15,7 @@ import { SettingsService } from '../settings/settings.service';
 import {
   ProviderCapabilities,
   PollResults,
+  ReactMessageInput,
   SendButtonsInput,
   SendListInput,
   SendMediaInput,
@@ -22,6 +24,8 @@ import {
   SendResult,
   SendTextInput,
 } from '../providers/provider.types';
+import { WhatsAppProvider } from '../providers/provider.interface';
+import { ReactMessageDto } from './dto/react-message.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -169,6 +173,35 @@ export class MessagingService {
     const results = await this.polls.results(instanceId, messageId);
     if (!results) throw new NotFoundException(`Enquete ${messageId} não encontrada`);
     return results;
+  }
+
+  // ── ações sobre mensagens existentes (gate de capability → 501) ──
+
+  async reactMessage(instanceId: string, dto: ReactMessageDto): Promise<SendResult> {
+    const p = await this.cap(instanceId, 'reactions', (x) => x.reactMessage);
+    const input: ReactMessageInput = {
+      chatId: dto.to,
+      messageId: dto.messageId,
+      emoji: dto.emoji,
+      fromMe: dto.fromMe,
+      participant: dto.participant,
+    };
+    return p.reactMessage!(input);
+  }
+
+  /** Provider vivo que suporta `flag` E expõe o método. Único ponto de 501. */
+  private async cap(
+    instanceId: string,
+    flag: keyof ProviderCapabilities,
+    pick: (p: WhatsAppProvider) => unknown,
+  ): Promise<WhatsAppProvider> {
+    const provider = await this.manager.requireLive(instanceId);
+    if (!provider.capabilities[flag] || typeof pick(provider) !== 'function') {
+      throw new NotImplementedException(
+        `A engine "${provider.type}" não suporta esta operação (${String(flag)}).`,
+      );
+    }
+    return provider;
   }
 
   /** Lança 422 se a engine não entrega o recurso. */

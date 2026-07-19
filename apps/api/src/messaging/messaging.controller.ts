@@ -9,6 +9,7 @@ import { SendPollDto } from './dto/send-poll.dto';
 import { SendButtonsDto } from './dto/send-buttons.dto';
 import { SendListDto } from './dto/send-list.dto';
 import { SendPixDto } from './dto/send-pix.dto';
+import { ReactMessageDto } from './dto/react-message.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -65,6 +66,15 @@ export class MessagingController {
   @ApiOperation({ summary: 'Envia botão PIX (copia-e-cola). Baileys-only, com fallback.' })
   sendPix(@Param('id') id: string, @Body() dto: SendPixDto) {
     return this.messaging.sendPix(id, dto);
+  }
+
+  @Post(':id/reaction')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({
+    summary: 'Reage a uma mensagem (emoji; vazio remove). 501 se a engine não suporta.',
+  })
+  react(@Param('id') id: string, @Body() dto: ReactMessageDto) {
+    return this.messaging.reactMessage(id, dto);
   }
 
   @Get(':id/status/:messageId')

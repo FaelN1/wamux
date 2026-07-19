@@ -36,6 +36,7 @@ import {
   PresenceInfo,
   ProviderCapabilities,
   ProviderType,
+  ReactMessageInput,
   SendButtonsInput,
   SendListInput,
   SendMediaInput,
@@ -289,6 +290,10 @@ export interface WhatsAppProvider {
     count: number;
     before?: HistoryCursor;
   }): Promise<{ requested: boolean }>;
+
+  // ── ações sobre mensagens existentes (gated por capabilities.*) ──
+  /** Reage a uma mensagem (emoji; string vazia remove). */
+  reactMessage?(input: ReactMessageInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,
