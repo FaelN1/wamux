@@ -1,8 +1,10 @@
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
+import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
   ConnectionStatus,
+  MessageAckStatus,
   MessageType,
   NormalizedMessage,
   ProviderType,
@@ -22,17 +24,29 @@ import {
  * ENTRAM via webhook da Meta → `handleInboundWebhook`.
  *
  * Config esperada na instância:
- *   { "phoneNumberId": "...", "accessToken": "...", "wabaId": "..." }
+ *   { phoneNumberId, accessToken, wabaId?, managementToken?, appId?,
+ *     cloudApiBaseUrl?, cloudApiVersion? }
+ *
+ * Dois tokens/clients: `this.http` (messaging, phoneNumberId — envio/mídia) e
+ * `this.mgmt` (management, wabaId — templates/flows/perfil/conta). Se
+ * `managementToken` faltar, reusa o `accessToken`.
  */
 export class CloudApiProvider extends BaseProvider {
   readonly type = ProviderType.CLOUD_API;
-  /** A API oficial da Meta expõe reação/localização/contato, mas NÃO editar/apagar/status. */
+  /** A API oficial da Meta expõe reação/localização/contato/download; NÃO editar/apagar/status. */
   readonly capabilities = {
     reactions: true,
     location: true,
     contact: true,
+    media: true,
   };
+
+  /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
   private http!: AxiosInstance;
+  /** client de MANAGEMENT (token de management, opera sobre wabaId/appId). */
+  private mgmt!: AxiosInstance;
+  private messagingToken!: string;
+  private baseUrl!: string;
 
   constructor(ctx: ProviderContext) {
     super(ctx);
@@ -44,16 +58,34 @@ export class CloudApiProvider extends BaseProvider {
     return v;
   }
 
+  /** WABA id — exigido pelos fluxos de management (templates/flows/conta). */
+  protected get wabaId(): string {
+    const v = this.config.wabaId as string | undefined;
+    if (!v) throw new Error('Cloud API: config.wabaId ausente (necessário para esta operação)');
+    return v;
+  }
+
   async initialize(): Promise<void> {
     const accessToken = this.config.accessToken as string | undefined;
     if (!accessToken) throw new Error('Cloud API: config.accessToken ausente');
 
     const baseUrl = (this.config.cloudApiBaseUrl as string) ?? 'https://graph.facebook.com';
     const version = (this.config.cloudApiVersion as string) ?? 'v21.0';
+    this.baseUrl = `${baseUrl}/${version}`;
+    this.messagingToken = accessToken;
 
     this.http = axios.create({
-      baseURL: `${baseUrl}/${version}`,
+      baseURL: this.baseUrl,
       headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 20_000,
+    });
+    // Token de management: escopo whatsapp_business_management. Fallback: o
+    // mesmo accessToken (quando já carrega ambos os escopos).
+    this.mgmt = axios.create({
+      baseURL: this.baseUrl,
+      headers: {
+        Authorization: `Bearer ${(this.config.managementToken as string) ?? accessToken}`,
+      },
       timeout: 20_000,
     });
 
@@ -73,6 +105,7 @@ export class CloudApiProvider extends BaseProvider {
       to,
       type: 'text',
       text: { preview_url: input.linkPreview !== false, body: input.text },
+      ...this.context(input.quotedMessageId),
     });
     return this.result(res.data, to);
   }
@@ -105,6 +138,7 @@ export class CloudApiProvider extends BaseProvider {
       to,
       type: mediaKey,
       [mediaKey]: media,
+      ...this.context(input.quotedMessageId),
     });
     return this.result(res.data, to);
   }
@@ -156,6 +190,7 @@ export class CloudApiProvider extends BaseProvider {
         name: input.name,
         address: input.address,
       },
+      ...this.context(input.quotedMessageId),
     });
     return this.result(res.data, to);
   }
@@ -176,8 +211,32 @@ export class CloudApiProvider extends BaseProvider {
       to,
       type: 'contacts',
       contacts,
+      ...this.context(input.quotedMessageId),
     });
     return this.result(res.data, to);
+  }
+
+  /**
+   * Baixa a mídia de uma mensagem inbound. Dois passos: GET /{media-id} devolve
+   * uma URL assinada (expira em ~5 min) + metadados; o download real exige o
+   * header de auth TAMBÉM na URL assinada (omiti-lo falha).
+   */
+  async downloadMedia(msg: NormalizedMessage): Promise<Readable | null> {
+    const raw = msg.raw as CloudMessage;
+    const mediaId =
+      raw?.image?.id ?? raw?.video?.id ?? raw?.audio?.id ?? raw?.document?.id ?? raw?.sticker?.id;
+    if (!mediaId) return null;
+
+    const meta = await this.http.get(`/${mediaId}`);
+    const url = (meta.data as { url?: string })?.url;
+    if (!url) return null;
+
+    const bin = await axios.get(url, {
+      headers: { Authorization: `Bearer ${this.messagingToken}` },
+      responseType: 'stream',
+      timeout: 30_000,
+    });
+    return bin.data as Readable;
   }
 
   async logout(): Promise<void> {
@@ -190,20 +249,51 @@ export class CloudApiProvider extends BaseProvider {
   }
 
   /**
-   * Webhook de entrada da Meta. Estrutura:
-   * entry[].changes[].value.messages[] + .contacts[] + .statuses[]
+   * Webhook de entrada da Meta — roteado por `change.field`. Templates (fase 2),
+   * Flows (4) e Calling (6) chegam pelo MESMO webhook, com `field` diferente;
+   * cada fase pluga um `case` aqui.
    */
   async handleInboundWebhook(payload: unknown): Promise<void> {
     const body = payload as CloudWebhookBody;
     for (const entry of body?.entry ?? []) {
       for (const change of entry.changes ?? []) {
-        const value = change.value;
-        const contactName = value?.contacts?.[0]?.profile?.name;
-        for (const msg of value?.messages ?? []) {
-          this.emitTyped('message', this.normalize(msg, contactName));
+        switch (change.field) {
+          case 'messages':
+            this.handleMessagesChange(change.value);
+            break;
+          default:
+            this.logger.debug(`[cloud] webhook field não tratado: ${change.field}`);
         }
-        // status updates (sent/delivered/read) poderiam virar 'message.status' aqui.
       }
+    }
+  }
+
+  // ── webhook: handlers por field ──────────────────────────────
+
+  /** `messages[]` (inbound) + `statuses[]` (sent/delivered/read/failed) no mesmo value. */
+  private handleMessagesChange(value?: CloudChangeValue): void {
+    const contactName = value?.contacts?.[0]?.profile?.name;
+    for (const msg of value?.messages ?? []) {
+      this.emitTyped('message', this.normalize(msg, contactName));
+    }
+    for (const st of value?.statuses ?? []) {
+      this.emitTyped('message.status', {
+        provider: this.type,
+        instanceId: this.instanceId,
+        messageId: st.id,
+        chatId: st.recipient_id,
+        status: this.mapStatus(st.status),
+        timestamp: Number(st.timestamp ?? 0),
+        ...(st.errors?.length
+          ? {
+              error: {
+                code: st.errors[0].code,
+                title: st.errors[0].title,
+                message: st.errors[0].message,
+              },
+            }
+          : {}),
+      });
     }
   }
 
@@ -211,6 +301,26 @@ export class CloudApiProvider extends BaseProvider {
 
   private toNumber(to: string): string {
     return to.replace(/\D/g, '');
+  }
+
+  /** Envelope `context` para reply/quote (mesmo formato em todos os tipos). */
+  private context(quotedMessageId?: string): Record<string, unknown> {
+    return quotedMessageId ? { context: { message_id: quotedMessageId } } : {};
+  }
+
+  private mapStatus(s?: string): MessageAckStatus {
+    switch (s) {
+      case 'sent':
+        return MessageAckStatus.SERVER;
+      case 'delivered':
+        return MessageAckStatus.DELIVERED;
+      case 'read':
+        return MessageAckStatus.READ;
+      case 'failed':
+        return MessageAckStatus.FAILED;
+      default:
+        return MessageAckStatus.PENDING;
+    }
   }
 
   private result(data: CloudSendResponse, to: string): SendResult {
@@ -226,6 +336,7 @@ export class CloudApiProvider extends BaseProvider {
     let type = MessageType.UNKNOWN;
     let text: string | undefined;
     let media: NormalizedMessage['media'];
+    let location: NormalizedMessage['location'];
 
     switch (msg.type) {
       case 'text':
@@ -249,6 +360,34 @@ export class CloudApiProvider extends BaseProvider {
         type = MessageType.DOCUMENT;
         media = { mimetype: msg.document?.mime_type, filename: msg.document?.filename };
         break;
+      case 'sticker':
+        type = MessageType.STICKER;
+        media = { mimetype: msg.sticker?.mime_type };
+        break;
+      case 'location':
+        type = MessageType.LOCATION;
+        if (msg.location) {
+          location = {
+            latitude: msg.location.latitude,
+            longitude: msg.location.longitude,
+            name: msg.location.name,
+            address: msg.location.address,
+          };
+        }
+        break;
+      case 'interactive':
+        // resposta de botão/lista/flow — o texto vira o título/valor selecionado.
+        type = MessageType.INTERACTIVE;
+        text =
+          msg.interactive?.button_reply?.title ??
+          msg.interactive?.list_reply?.title ??
+          msg.interactive?.nfm_reply?.body;
+        break;
+      case 'button':
+        // quick-reply de TEMPLATE (diferente de interactive.button_reply).
+        type = MessageType.INTERACTIVE;
+        text = msg.button?.text;
+        break;
     }
 
     return {
@@ -264,6 +403,7 @@ export class CloudApiProvider extends BaseProvider {
       type,
       text,
       media,
+      location,
       raw: msg,
     };
   }
@@ -273,24 +413,46 @@ export class CloudApiProvider extends BaseProvider {
 interface CloudSendResponse {
   messages?: { id: string }[];
 }
+interface CloudMediaRef {
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
+}
 interface CloudMessage {
   id: string;
   from: string;
   timestamp?: string;
   type: string;
   text?: { body: string };
-  image?: { mime_type?: string; caption?: string };
-  video?: { mime_type?: string; caption?: string };
-  audio?: { mime_type?: string };
-  document?: { mime_type?: string; filename?: string };
+  image?: CloudMediaRef;
+  video?: CloudMediaRef;
+  audio?: CloudMediaRef;
+  document?: CloudMediaRef;
+  sticker?: CloudMediaRef;
+  location?: { latitude: number; longitude: number; name?: string; address?: string };
+  interactive?: {
+    type?: string;
+    button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string; description?: string };
+    nfm_reply?: { name?: string; body?: string; response_json?: string };
+  };
+  button?: { text?: string; payload?: string };
+}
+interface CloudStatus {
+  id: string;
+  status?: string;
+  timestamp?: string;
+  recipient_id: string;
+  errors?: { code?: number; title?: string; message?: string }[];
+}
+interface CloudChangeValue {
+  contacts?: { profile?: { name?: string } }[];
+  messages?: CloudMessage[];
+  statuses?: CloudStatus[];
 }
 interface CloudWebhookBody {
   entry?: {
-    changes?: {
-      value?: {
-        contacts?: { profile?: { name?: string } }[];
-        messages?: CloudMessage[];
-      };
-    }[];
+    changes?: { field?: string; value?: CloudChangeValue }[];
   }[];
 }

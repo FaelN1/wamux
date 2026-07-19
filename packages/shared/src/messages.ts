@@ -104,6 +104,8 @@ export interface MessageStatusUpdate {
   chatId: string;
   status: MessageAckStatus;
   timestamp: number;
+  /** preenchido quando status = failed (ex.: Cloud API traz code/title/message). */
+  error?: { code?: number; title?: string; message?: string };
 }
 
 export interface ConnectionUpdate {
