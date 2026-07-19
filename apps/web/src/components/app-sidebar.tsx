@@ -1,4 +1,5 @@
 import {
+  FileText,
   Hexagon,
   Inbox,
   LayoutDashboard,
@@ -28,6 +29,7 @@ const NAV: { path: string; label: string; icon: typeof LayoutDashboard }[] = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/instances', label: 'Instâncias', icon: MessageSquare },
   { path: '/inbox', label: 'Inbox', icon: Inbox },
+  { path: '/templates', label: 'Templates', icon: FileText },
   { path: '/logs', label: 'Logs', icon: ScrollText },
   { path: '/playground', label: 'Playground', icon: TerminalSquare },
   { path: '/settings', label: 'Configurações', icon: Settings },

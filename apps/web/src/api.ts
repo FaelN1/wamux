@@ -23,6 +23,9 @@ import {
   type SettingsUpdate,
   type StatsOverview,
   type WamuxSettings,
+  type MessageTemplate,
+  type CreateTemplateInput,
+  type SendTemplateInput,
 } from '@wamux/shared';
 
 // API versionada: rotas de negócio em /api/v1; health/webhooks são
@@ -322,6 +325,48 @@ export function useMarkChatRead() {
     mutationFn: ({ id, jid }: { id: string; jid: string }) =>
       req(`/instances/${id}/chats/${encodeURIComponent(jid)}/read`, { method: 'POST' }),
     onSuccess: (_data, { id }) => qc.invalidateQueries({ queryKey: ['inbox-chats', id] }),
+  });
+}
+
+// ── templates HSM (Cloud API) ────────────────────────────
+export type { MessageTemplate };
+
+export function useTemplates(instanceId: string | null) {
+  return useQuery({
+    queryKey: ['templates', instanceId],
+    enabled: !!instanceId,
+    retry: false,
+    queryFn: () => req<MessageTemplate[]>(`/instances/${instanceId}/templates`),
+  });
+}
+
+export function useCreateTemplate(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateTemplateInput) =>
+      req(`/instances/${instanceId}/templates`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates', instanceId] }),
+  });
+}
+
+export function useDeleteTemplate(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      req(`/instances/${instanceId}/templates?name=${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['templates', instanceId] }),
+  });
+}
+
+export function useSendTemplate(instanceId: string) {
+  return useMutation({
+    mutationFn: (body: SendTemplateInput) =>
+      req(`/instances/${instanceId}/templates/send`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
   });
 }
 
