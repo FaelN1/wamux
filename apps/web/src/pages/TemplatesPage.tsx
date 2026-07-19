@@ -128,7 +128,7 @@ function paramCount(t: MessageTemplate): number {
 /** contador de caracteres com cor ao estourar. */
 function Counter({ n, max }: { n: number; max: number }) {
   return (
-    <span className={cn('text-[10px]', n > max ? 'text-destructive' : 'text-muted-foreground')}>
+    <span className={cn('text-xs', n > max ? 'text-destructive' : 'text-muted-foreground')}>
       {n}/{max}
     </span>
   );
@@ -260,6 +260,7 @@ export function TemplatesPage() {
   const [bodyExamples, setBodyExamples] = useState<string[]>([]);
   const [footer, setFooter] = useState('');
   const [buttons, setButtons] = useState<BtnDraft[]>([]);
+  const [addType, setAddType] = useState<BtnType>('QUICK_REPLY');
 
   const bodyVars = useMemo(() => vars(body), [body]);
   const headerHasVar = headerFormat === 'TEXT' && vars(headerText).length > 0;
@@ -419,7 +420,7 @@ export function TemplatesPage() {
         </Card>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,440px)_320px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,460px)_360px]">
         {/* ── builder ── */}
         <Card className="h-fit">
           <CardHeader>
@@ -489,7 +490,7 @@ export function TemplatesPage() {
               {headerFormat === 'TEXT' && (
                 <>
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       Texto (até 1 variável {'{{1}}'})
                     </span>
                     <Counter n={headerText.length} max={LIM.headerText} />
@@ -516,7 +517,7 @@ export function TemplatesPage() {
                     onChange={(e) => setHeaderHandle(e.target.value)}
                     placeholder={`handle da mídia (${headerFormat})`}
                   />
-                  <p className="text-[10px] text-amber-500">
+                  <p className="text-xs text-amber-500">
                     Cabeçalho de mídia exige um <b>handle</b> da Resumable Upload API (helper de
                     upload é sub-tarefa pendente).
                   </p>
@@ -540,7 +541,7 @@ export function TemplatesPage() {
               />
               {bodyVars.length > 0 && (
                 <div className="space-y-1.5 rounded-md bg-muted/40 p-2">
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Exemplos das variáveis (a Meta exige):
                   </p>
                   {bodyVars.map((v, i) => (
@@ -582,7 +583,7 @@ export function TemplatesPage() {
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground">
                   Botões ({buttons.length}/{LIM.buttonsTotal})
                 </Label>
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   URL {btnCount('URL')}/{LIM.url} · Tel {btnCount('PHONE_NUMBER')}/{LIM.phone} · Cód{' '}
                   {btnCount('COPY_CODE')}/{LIM.copy}
                 </span>
@@ -650,18 +651,26 @@ export function TemplatesPage() {
                 </div>
               ))}
 
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {(Object.keys(BTN_LABEL) as BtnType[]).map((ty) => (
-                  <Button
-                    key={ty}
-                    size="sm"
-                    variant="outline"
-                    disabled={!canAdd(ty)}
-                    onClick={() => addBtn(ty)}
-                  >
-                    <Plus className="size-3.5" /> {BTN_LABEL[ty]}
-                  </Button>
-                ))}
+              <div className="flex items-center gap-2 pt-1">
+                <select
+                  value={addType}
+                  onChange={(e) => setAddType(e.target.value as BtnType)}
+                  className="h-9 flex-1 rounded-md border border-input bg-transparent px-2 text-sm"
+                >
+                  {(Object.keys(BTN_LABEL) as BtnType[]).map((ty) => (
+                    <option key={ty} value={ty} disabled={!canAdd(ty)}>
+                      {BTN_LABEL[ty]}
+                      {!canAdd(ty) ? ' — limite' : ''}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="outline"
+                  disabled={!canAdd(addType)}
+                  onClick={() => addBtn(addType)}
+                >
+                  <Plus className="size-4" /> Adicionar
+                </Button>
               </div>
             </div>
 
@@ -680,7 +689,7 @@ export function TemplatesPage() {
         </Card>
 
         {/* ── preview ao vivo, ao lado do formulário ── */}
-        <div className="h-fit xl:sticky xl:top-4">
+        <div className="h-fit lg:sticky lg:top-4">
           <TemplatePreview
             headerFormat={headerFormat}
             headerText={headerText}
