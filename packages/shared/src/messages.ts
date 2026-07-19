@@ -338,6 +338,11 @@ export interface ReactMessageInput extends MessageRef {
   emoji: string;
 }
 
+export interface EditMessageInput extends MessageRef {
+  /** novo texto da mensagem. */
+  text: string;
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

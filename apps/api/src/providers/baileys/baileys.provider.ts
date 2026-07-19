@@ -41,6 +41,7 @@ import {
   SendMediaInput,
   SendPixInput,
   ReactMessageInput,
+  EditMessageInput,
   SendPollInput,
   SendResult,
   SendTextInput,
@@ -89,6 +90,7 @@ export class BaileysProvider extends BaseProvider {
     contactAvatar: true,
     history: true,
     reactions: true,
+    editMessage: true,
     poll: true,
     pollResults: true,
     buttons: true,
@@ -1320,6 +1322,21 @@ export class BaileysProvider extends BaseProvider {
       ...(input.participant ? { participant: this.toJid(input.participant) } : {}),
     };
     const sent = await this.socket().sendMessage(jid, { react: { text: input.emoji, key } });
+    return this.result(sent, jid);
+  }
+
+  async editMessage(input: EditMessageInput): Promise<SendResult> {
+    const jid = this.toJid(input.chatId);
+    const key = {
+      remoteJid: jid,
+      id: input.messageId,
+      fromMe: input.fromMe ?? true,
+      ...(input.participant ? { participant: this.toJid(input.participant) } : {}),
+    };
+    const sent = await this.socket().sendMessage(jid, {
+      text: input.text,
+      edit: key,
+    } as unknown as AnyMessageContent);
     return this.result(sent, jid);
   }
 

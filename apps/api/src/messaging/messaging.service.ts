@@ -16,6 +16,7 @@ import {
   ProviderCapabilities,
   PollResults,
   ReactMessageInput,
+  EditMessageInput,
   SendButtonsInput,
   SendListInput,
   SendMediaInput,
@@ -26,6 +27,7 @@ import {
 } from '../providers/provider.types';
 import { WhatsAppProvider } from '../providers/provider.interface';
 import { ReactMessageDto } from './dto/react-message.dto';
+import { EditMessageDto } from './dto/edit-message.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -187,6 +189,18 @@ export class MessagingService {
       participant: dto.participant,
     };
     return p.reactMessage!(input);
+  }
+
+  async editMessage(instanceId: string, dto: EditMessageDto): Promise<SendResult> {
+    const p = await this.cap(instanceId, 'editMessage', (x) => x.editMessage);
+    const input: EditMessageInput = {
+      chatId: dto.to,
+      messageId: dto.messageId,
+      text: dto.text,
+      fromMe: dto.fromMe,
+      participant: dto.participant,
+    };
+    return p.editMessage!(input);
   }
 
   /** Provider vivo que suporta `flag` E expõe o método. Único ponto de 501. */

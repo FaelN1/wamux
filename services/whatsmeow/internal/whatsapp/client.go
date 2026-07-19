@@ -513,6 +513,29 @@ func (c *Client) React(to, messageID, sender, emoji string, fromMe bool) (string
 	return resp.ID, nil
 }
 
+// Edit substitui o texto de uma mensagem já enviada (só a própria).
+func (c *Client) Edit(to, messageID, text string) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	chat, err := parseJID(to)
+	if err != nil {
+		return "", err
+	}
+
+	newContent := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(text),
+		},
+	}
+
+	editMsg := c.WAClient.BuildEdit(chat, messageID, newContent)
+	resp, err := c.WAClient.SendMessage(ctx, chat, editMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to edit: %w", err)
+	}
+	return resp.ID, nil
+}
+
 func (c *Client) DeleteMessages(to string, ids []string, forEveryone bool) (int, int, error) {
 	ctx, cancel := waCtx()
 	defer cancel()

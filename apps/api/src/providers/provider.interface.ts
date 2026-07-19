@@ -34,6 +34,7 @@ import {
   PollVoteUpdate,
   PortableCredentials,
   PresenceInfo,
+  EditMessageInput,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -294,6 +295,8 @@ export interface WhatsAppProvider {
   // ── ações sobre mensagens existentes (gated por capabilities.*) ──
   /** Reage a uma mensagem (emoji; string vazia remove). */
   reactMessage?(input: ReactMessageInput): Promise<SendResult>;
+  /** Edita o texto de uma mensagem já enviada (só a própria). */
+  editMessage?(input: EditMessageInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

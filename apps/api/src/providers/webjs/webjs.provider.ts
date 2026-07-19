@@ -33,6 +33,7 @@ import {
   SendMediaInput,
   SendPollInput,
   ReactMessageInput,
+  EditMessageInput,
   SendResult,
   SendTextInput,
   SetPresenceInput,
@@ -61,6 +62,7 @@ export class WebjsProvider extends BaseProvider {
     poll: true,
     pollResults: true,
     reactions: true,
+    editMessage: true,
     groups: true,
     buttons: false,
     list: false,
@@ -288,6 +290,19 @@ export class WebjsProvider extends BaseProvider {
     const serialized = `${input.fromMe ? 'true' : 'false'}_${chatId}_${input.messageId}`;
     const msg = await this.requireClient().getMessageById(serialized);
     await msg.react(input.emoji);
+    return {
+      id: input.messageId,
+      to: chatId,
+      timestamp: Math.floor(Date.now() / 1000),
+      status: 'sent',
+    };
+  }
+
+  async editMessage(input: EditMessageInput): Promise<SendResult> {
+    const chatId = this.toChatId(input.chatId);
+    const serialized = `${input.fromMe === false ? 'false' : 'true'}_${chatId}_${input.messageId}`;
+    const msg = await this.requireClient().getMessageById(serialized);
+    await msg.edit(input.text);
     return {
       id: input.messageId,
       to: chatId,

@@ -280,6 +280,7 @@ func main() {
 	messageGroup.Post("/media", messageHandler.SendMedia)
 	messageGroup.Post("/poll", messageHandler.SendPoll)
 	messageGroup.Post("/react", messageHandler.React)
+	messageGroup.Post("/edit", messageHandler.Edit)
 	messageGroup.Post("/status", messageHandler.SendStatus)
 	messageGroup.Post("/broadcast", messageHandler.Broadcast)
 	messageGroup.Delete("/", messageHandler.Delete)

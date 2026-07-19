@@ -42,6 +42,8 @@ export interface ProviderCapabilities {
   history?: boolean;
   /** reagir a uma mensagem (emoji). */
   reactions?: boolean;
+  /** editar uma mensagem já enviada. */
+  editMessage?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

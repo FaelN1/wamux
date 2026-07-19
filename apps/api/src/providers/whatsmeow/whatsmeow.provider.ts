@@ -29,6 +29,7 @@ import {
   SendMediaInput,
   SendPollInput,
   ReactMessageInput,
+  EditMessageInput,
   SendResult,
   SendTextInput,
   UpsertLabelInput,
@@ -87,6 +88,7 @@ export class WhatsmeowProvider extends BaseProvider {
     // na própria lib go.mau.fi/whatsmeow). Ver docs/newsletter-contract-handoff.md.
     newsletterMedia: true,
     reactions: true,
+    editMessage: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -365,6 +367,16 @@ export class WhatsmeowProvider extends BaseProvider {
       emoji: input.emoji,
       from_me: input.fromMe ?? false,
       sender: input.participant ? this.toJid(input.participant) : undefined,
+    });
+    return this.result(res.data, jid);
+  }
+
+  async editMessage(input: EditMessageInput): Promise<SendResult> {
+    const jid = this.toJid(input.chatId);
+    const res = await this.client().post('/message/edit', {
+      to: jid,
+      message_id: input.messageId,
+      text: input.text,
     });
     return this.result(res.data, jid);
   }

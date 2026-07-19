@@ -10,6 +10,7 @@ import { SendButtonsDto } from './dto/send-buttons.dto';
 import { SendListDto } from './dto/send-list.dto';
 import { SendPixDto } from './dto/send-pix.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
+import { EditMessageDto } from './dto/edit-message.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -75,6 +76,13 @@ export class MessagingController {
   })
   react(@Param('id') id: string, @Body() dto: ReactMessageDto) {
     return this.messaging.reactMessage(id, dto);
+  }
+
+  @Post(':id/edit')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({ summary: 'Edita o texto de uma mensagem enviada. 501 se a engine não suporta.' })
+  edit(@Param('id') id: string, @Body() dto: EditMessageDto) {
+    return this.messaging.editMessage(id, dto);
   }
 
   @Get(':id/status/:messageId')
