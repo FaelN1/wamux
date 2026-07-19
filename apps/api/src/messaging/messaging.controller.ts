@@ -11,6 +11,7 @@ import { SendListDto } from './dto/send-list.dto';
 import { SendPixDto } from './dto/send-pix.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
+import { DeleteMessageDto } from './dto/delete-message.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -83,6 +84,13 @@ export class MessagingController {
   @ApiOperation({ summary: 'Edita o texto de uma mensagem enviada. 501 se a engine não suporta.' })
   edit(@Param('id') id: string, @Body() dto: EditMessageDto) {
     return this.messaging.editMessage(id, dto);
+  }
+
+  @Post(':id/delete')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({ summary: 'Apaga uma mensagem (para todos por padrão). 501 se não suportada.' })
+  delete(@Param('id') id: string, @Body() dto: DeleteMessageDto) {
+    return this.messaging.deleteMessage(id, dto);
   }
 
   @Get(':id/status/:messageId')

@@ -17,6 +17,7 @@ import {
   PollResults,
   ReactMessageInput,
   EditMessageInput,
+  DeleteMessageInput,
   SendButtonsInput,
   SendListInput,
   SendMediaInput,
@@ -28,6 +29,7 @@ import {
 import { WhatsAppProvider } from '../providers/provider.interface';
 import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
+import { DeleteMessageDto } from './dto/delete-message.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -201,6 +203,18 @@ export class MessagingService {
       participant: dto.participant,
     };
     return p.editMessage!(input);
+  }
+
+  async deleteMessage(instanceId: string, dto: DeleteMessageDto): Promise<SendResult> {
+    const p = await this.cap(instanceId, 'deleteMessage', (x) => x.deleteMessage);
+    const input: DeleteMessageInput = {
+      chatId: dto.to,
+      messageId: dto.messageId,
+      forEveryone: dto.forEveryone,
+      fromMe: dto.fromMe,
+      participant: dto.participant,
+    };
+    return p.deleteMessage!(input);
   }
 
   /** Provider vivo que suporta `flag` E expõe o método. Único ponto de 501. */

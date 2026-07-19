@@ -44,6 +44,8 @@ export interface ProviderCapabilities {
   reactions?: boolean;
   /** editar uma mensagem já enviada. */
   editMessage?: boolean;
+  /** apagar uma mensagem (para todos / revoke). */
+  deleteMessage?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

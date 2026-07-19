@@ -30,6 +30,7 @@ import {
   SendPollInput,
   ReactMessageInput,
   EditMessageInput,
+  DeleteMessageInput,
   SendResult,
   SendTextInput,
   UpsertLabelInput,
@@ -89,6 +90,7 @@ export class WhatsmeowProvider extends BaseProvider {
     newsletterMedia: true,
     reactions: true,
     editMessage: true,
+    deleteMessage: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -379,6 +381,24 @@ export class WhatsmeowProvider extends BaseProvider {
       text: input.text,
     });
     return this.result(res.data, jid);
+  }
+
+  /** O sidecar Go só faz revoke (para todos); `forEveryone:false` cai no mesmo caminho. */
+  async deleteMessage(input: DeleteMessageInput): Promise<SendResult> {
+    const jid = this.toJid(input.chatId);
+    await this.client().delete('/message', {
+      data: {
+        to: jid,
+        message_ids: [input.messageId],
+        for_everyone: input.forEveryone !== false,
+      },
+    });
+    return {
+      id: input.messageId,
+      to: jid,
+      timestamp: Math.floor(Date.now() / 1000),
+      status: 'sent',
+    };
   }
 
   async logout(): Promise<void> {

@@ -34,6 +34,7 @@ import {
   PollVoteUpdate,
   PortableCredentials,
   PresenceInfo,
+  DeleteMessageInput,
   EditMessageInput,
   ProviderCapabilities,
   ProviderType,
@@ -297,6 +298,8 @@ export interface WhatsAppProvider {
   reactMessage?(input: ReactMessageInput): Promise<SendResult>;
   /** Edita o texto de uma mensagem já enviada (só a própria). */
   editMessage?(input: EditMessageInput): Promise<SendResult>;
+  /** Apaga uma mensagem (para todos / revoke, ou só pra mim). */
+  deleteMessage?(input: DeleteMessageInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

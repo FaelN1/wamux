@@ -343,6 +343,11 @@ export interface EditMessageInput extends MessageRef {
   text: string;
 }
 
+export interface DeleteMessageInput extends MessageRef {
+  /** apagar para todos (revoke). false = apagar só pra mim. Default true. */
+  forEveryone?: boolean;
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

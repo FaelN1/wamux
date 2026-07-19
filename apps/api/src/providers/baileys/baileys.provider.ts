@@ -42,6 +42,7 @@ import {
   SendPixInput,
   ReactMessageInput,
   EditMessageInput,
+  DeleteMessageInput,
   SendPollInput,
   SendResult,
   SendTextInput,
@@ -91,6 +92,7 @@ export class BaileysProvider extends BaseProvider {
     history: true,
     reactions: true,
     editMessage: true,
+    deleteMessage: true,
     poll: true,
     pollResults: true,
     buttons: true,
@@ -1337,6 +1339,30 @@ export class BaileysProvider extends BaseProvider {
       text: input.text,
       edit: key,
     } as unknown as AnyMessageContent);
+    return this.result(sent, jid);
+  }
+
+  async deleteMessage(input: DeleteMessageInput): Promise<SendResult> {
+    const jid = this.toJid(input.chatId);
+    const key = {
+      remoteJid: jid,
+      id: input.messageId,
+      fromMe: input.fromMe ?? true,
+      ...(input.participant ? { participant: this.toJid(input.participant) } : {}),
+    };
+    if (input.forEveryone === false) {
+      await this.socket().chatModify(
+        { deleteForMe: { deleteMedia: false, key, timestamp: Date.now() } },
+        jid,
+      );
+      return {
+        id: input.messageId,
+        to: jid,
+        timestamp: Math.floor(Date.now() / 1000),
+        status: 'sent',
+      };
+    }
+    const sent = await this.socket().sendMessage(jid, { delete: key });
     return this.result(sent, jid);
   }
 
