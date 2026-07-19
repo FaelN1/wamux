@@ -26,6 +26,8 @@ import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
 import { InboxModule } from './inbox/inbox.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { McpModule } from './mcp/mcp.module';
 
 @Module({
   imports: [
@@ -66,6 +68,7 @@ import { ActivityLogModule } from './activity-log/activity-log.module';
     ThrottleModule,
     DatabaseModule,
     ActivityLogModule,
+    ApiKeysModule,
     SettingsModule,
     IdentityModule,
     MediaModule,
@@ -85,6 +88,7 @@ import { ActivityLogModule } from './activity-log/activity-log.module';
     StatsModule,
     HealthModule,
     InboxModule,
+    McpModule,
   ],
 })
 export class AppModule {}

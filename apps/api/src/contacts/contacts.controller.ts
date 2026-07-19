@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiKeyAction } from '@wamux/shared';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { ContactsService } from './contacts.service';
 import { NumberCheckService } from './number-check.service';
 import { SetPresenceDto } from './dto/set-presence.dto';
@@ -21,6 +23,7 @@ export class ContactsController {
 
   @Post('contacts/:jid/block')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Bloqueia um contato.' })
   async block(@Param('id') id: string, @Param('jid') jid: string) {
     await this.contacts.block(id, jid);
@@ -29,6 +32,7 @@ export class ContactsController {
 
   @Post('contacts/:jid/unblock')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Desbloqueia um contato.' })
   async unblock(@Param('id') id: string, @Param('jid') jid: string) {
     await this.contacts.unblock(id, jid);
@@ -37,6 +41,7 @@ export class ContactsController {
 
   @Post('presence')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Seta presença (digitando/gravando/online).' })
   async setPresence(@Param('id') id: string, @Body() dto: SetPresenceDto) {
     await this.contacts.setPresence(id, {
@@ -48,18 +53,21 @@ export class ContactsController {
   }
 
   @Get('contacts/:jid/presence')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Consulta a presença de um contato.' })
   getPresence(@Param('id') id: string, @Param('jid') jid: string) {
     return this.contacts.getPresence(id, jid);
   }
 
   @Get('chats/:jid/messages')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Mensagens de um chat, paginadas por cursor.' })
   messages(@Param('id') id: string, @Param('jid') jid: string, @Query() q: FetchMessagesQueryDto) {
     return this.contacts.fetchMessages(id, jid, q.limit ?? 50, q.before);
   }
 
   @Post('numbers/check')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Checa se números têm WhatsApp (teto 20 + cache + rate-limit).' })
   check(@Param('id') id: string, @Body() dto: CheckNumbersDto) {
     return this.numbers.check(id, dto.numbers);
@@ -67,6 +75,7 @@ export class ContactsController {
 
   @Post('chats/:jid/read')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({
     summary: 'Marca um chat como lido (protocolo ao vivo + unread persistido do Inbox).',
   })

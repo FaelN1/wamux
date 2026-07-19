@@ -10,7 +10,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiKeyAction } from '@wamux/shared';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateParticipantsDto } from './dto/update-participants.dto';
@@ -27,12 +29,14 @@ export class GroupsController {
   constructor(private readonly svc: GroupsService) {}
 
   @Get()
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Lista os grupos de que a conta participa.' })
   list(@Param('id') id: string) {
     return this.svc.list(id);
   }
 
   @Post()
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Cria um grupo com participantes iniciais.' })
   create(@Param('id') id: string, @Body() dto: CreateGroupDto) {
     return this.svc.create(id, dto);
@@ -41,18 +45,21 @@ export class GroupsController {
   // Rota estática antes de :jid para não colidir com o param.
   @Post('join')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Entra num grupo por código ou link de convite.' })
   join(@Param('id') id: string, @Body() dto: JoinGroupDto) {
     return this.svc.join(id, dto.code);
   }
 
   @Get(':jid')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Metadados do grupo (participantes, admins, settings).' })
   metadata(@Param('id') id: string, @Param('jid') jid: string) {
     return this.svc.metadata(id, jid);
   }
 
   @Post(':jid/participants')
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Adiciona / remove / promove / rebaixa participantes.' })
   participants(
     @Param('id') id: string,
@@ -63,30 +70,39 @@ export class GroupsController {
   }
 
   @Put(':jid/subject')
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Altera o assunto (nome) do grupo.' })
   subject(@Param('id') id: string, @Param('jid') jid: string, @Body() dto: UpdateSubjectDto) {
     return this.svc.setSubject(id, jid, dto.subject);
   }
 
   @Put(':jid/description')
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Altera a descrição do grupo.' })
-  description(@Param('id') id: string, @Param('jid') jid: string, @Body() dto: UpdateDescriptionDto) {
+  description(
+    @Param('id') id: string,
+    @Param('jid') jid: string,
+    @Body() dto: UpdateDescriptionDto,
+  ) {
     return this.svc.setDescription(id, jid, dto.description);
   }
 
   @Put(':jid/setting')
+  @RequireScope(ApiKeyAction.CONTROL)
   @ApiOperation({ summary: 'Ajusta quem envia (announce) e quem edita infos (locked).' })
   setting(@Param('id') id: string, @Param('jid') jid: string, @Body() dto: GroupSettingDto) {
     return this.svc.setSetting(id, jid, dto.setting);
   }
 
   @Get(':jid/invite')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Código e link de convite do grupo.' })
   invite(@Param('id') id: string, @Param('jid') jid: string) {
     return this.svc.getInvite(id, jid);
   }
 
   @Delete(':jid/invite')
+  @RequireScope(ApiKeyAction.DELETE)
   @ApiOperation({ summary: 'Revoga o convite atual e gera um novo.' })
   revoke(@Param('id') id: string, @Param('jid') jid: string) {
     return this.svc.revokeInvite(id, jid);
@@ -94,6 +110,7 @@ export class GroupsController {
 
   @Post(':jid/leave')
   @HttpCode(200)
+  @RequireScope(ApiKeyAction.DELETE)
   @ApiOperation({ summary: 'Sai do grupo.' })
   leave(@Param('id') id: string, @Param('jid') jid: string) {
     return this.svc.leave(id, jid);

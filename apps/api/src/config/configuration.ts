@@ -47,11 +47,24 @@ export default () => ({
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? '',
 
   // Pipeline de mídia. store=local (default) grava em disco e serve
-  // pela rota do gateway; s3 (plugável) usa MEDIA_STORE alternativo.
+  // pela rota do gateway; store=s3 usa um bucket S3 (ou compatível —
+  // MinIO, Spaces) pros bytes, mas a URL servida continua sendo a rota
+  // do gateway (ver S3MediaStore.url()) — nunca presigned.
   media: {
     store: process.env.MEDIA_STORE ?? 'local',
     maxSizeMb: parseInt(process.env.MEDIA_MAX_SIZE_MB ?? '100', 10),
     local: { dir: process.env.MEDIA_LOCAL_DIR ?? './data/media' },
+    s3: {
+      endpoint: process.env.MEDIA_S3_ENDPOINT ?? '',
+      region: process.env.MEDIA_S3_REGION ?? 'us-east-1',
+      bucket: process.env.MEDIA_S3_BUCKET ?? '',
+      accessKeyId: process.env.MEDIA_S3_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.MEDIA_S3_SECRET_ACCESS_KEY ?? '',
+      // true = path-style (bucket no path da URL) — necessário pro MinIO e
+      // pela maioria dos serviços S3-compatíveis; AWS S3 real costuma usar
+      // virtual-hosted style (false).
+      forcePathStyle: (process.env.MEDIA_S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+    },
   },
 
   // Identidade mostrada no WhatsApp ("Aparelhos conectados") — Baileys.

@@ -16,5 +16,6 @@ import { OUTBOUND_QUEUE } from './outbound.constants';
   ],
   controllers: [MessagingController],
   providers: [MessagingService, OutboundProcessor],
+  exports: [MessagingService],
 })
 export class MessagingModule {}

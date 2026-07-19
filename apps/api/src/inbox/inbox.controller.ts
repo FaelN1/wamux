@@ -1,6 +1,8 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiKeyAction } from '@wamux/shared';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { InboxQueryService } from './inbox-query.service';
 import { ListChatsQueryDto } from './dto/list-chats.query.dto';
 import { ListChatMessagesQueryDto } from './dto/list-chat-messages.query.dto';
@@ -20,6 +22,7 @@ export class InboxController {
   constructor(private readonly query: InboxQueryService) {}
 
   @Get('chats')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Lista de conversas persistidas ("Conversations"), Newest first.' })
   listChats(@Param('id') id: string, @Query() q: ListChatsQueryDto) {
     return this.query.listChats(id, {
@@ -32,6 +35,7 @@ export class InboxController {
   }
 
   @Get('chats/:jid/messages/db')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({
     summary: 'Thread persistida de um chat (paginada por cursor). Convive com a rota ao vivo.',
   })
@@ -50,12 +54,14 @@ export class InboxController {
   }
 
   @Get('contacts')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Lista de contatos persistidos, paginada por cursor.' })
   listContacts(@Param('id') id: string, @Query() q: ListContactsQueryDto) {
     return this.query.listContacts(id, { cursor: q.cursor, limit: q.limit, q: q.q });
   }
 
   @Get('contacts/:jid')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Um contato persistido (nome/avatar/business).' })
   getContact(@Param('id') id: string, @Param('jid') jid: string) {
     return this.query.getContact(id, jid);

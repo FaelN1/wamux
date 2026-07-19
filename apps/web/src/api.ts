@@ -3,11 +3,15 @@ import {
   PROVIDERS,
   WEBHOOK_EVENTS,
   EVENT_TRANSPORTS,
+  ApiKeyAction,
   type ActivityLogEntry,
   type ActivityLogFacetCounts,
   type ActivityLogHistogramBucket,
   type ActivityLogStatus,
   type ActivityLogType,
+  type ApiKeySummary,
+  type CreateApiKeyInput,
+  type CreateApiKeyResult,
   type ChatMessage,
   type ChatSummary,
   type ContactSummary,
@@ -108,8 +112,8 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 // ── tipos (fonte única: @wamux/shared) ───────────────────
-export { PROVIDERS, WEBHOOK_EVENTS, EVENT_TRANSPORTS };
-export type { InstanceEventsConfig };
+export { PROVIDERS, WEBHOOK_EVENTS, EVENT_TRANSPORTS, ApiKeyAction };
+export type { InstanceEventsConfig, ApiKeySummary, CreateApiKeyInput, CreateApiKeyResult };
 /** União string dos valores de ProviderType — ergonômico para estado de form. */
 export type Provider = `${ProviderType}`;
 export type Instance = InstanceDTO;
@@ -191,6 +195,35 @@ export function useSetEvents() {
     mutationFn: ({ id, config }: { id: string; config: InstanceEventsConfig }) =>
       req(`/instances/${id}/events`, { method: 'PUT', body: JSON.stringify(config) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['instances'] }),
+  });
+}
+
+// ── API keys com escopo granular + apps MCP ──────────────────────────────
+export function useApiKeys(instanceId: string) {
+  return useQuery({
+    queryKey: ['api-keys', instanceId],
+    queryFn: () => req<ApiKeySummary[]>(`/instances/${instanceId}/api-keys`),
+  });
+}
+
+export function useCreateApiKey(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateApiKeyInput) =>
+      req<CreateApiKeyResult>(`/instances/${instanceId}/api-keys`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys', instanceId] }),
+  });
+}
+
+export function useRevokeApiKey(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (keyId: string) =>
+      req(`/instances/${instanceId}/api-keys/${keyId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['api-keys', instanceId] }),
   });
 }
 

@@ -127,3 +127,19 @@ export enum ActivityLogStatus {
   PENDING = 'pending',
   SKIPPED = 'skipped',
 }
+
+/**
+ * Ação liberada por uma API key com escopo (ver
+ * `docs/api-keys-mcp-handoff.md`). A key MESTRA de uma instância e a
+ * `GLOBAL_API_KEY` continuam com todas as ações implicitamente — este enum
+ * só existe pras keys NOVAS, restritas, criadas via `instances/:id/api-keys`.
+ */
+export enum ApiKeyAction {
+  READ = 'read',
+  SEND = 'send',
+  CONTROL = 'control',
+  SETTING = 'setting',
+  /** gerenciar as PRÓPRIAS keys/apps MCP da instância — ver regra anti-escalonamento no design doc §8. */
+  APP = 'app',
+  DELETE = 'delete',
+}

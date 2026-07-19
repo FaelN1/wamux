@@ -1,8 +1,9 @@
 import { useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
-import { Check, Info, Radio, Rss, Save, Webhook as WebhookIcon } from 'lucide-react';
+import { Check, Info, KeyRound, Radio, Rss, Save, Webhook as WebhookIcon } from 'lucide-react';
 import type { InstanceEventsConfig } from '@wamux/shared';
 import { EMPTY_EVENTS_CONFIG } from '@wamux/shared';
 import { Instance, WEBHOOK_EVENTS, useSetEvents } from '@/api';
+import { ApiKeysSection } from '@/components/ApiKeysSection';
 import {
   Sheet,
   SheetContent,
@@ -16,9 +17,13 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
-type Section = 'webhook' | 'websocket' | 'rabbitmq';
+type Section = 'webhook' | 'websocket' | 'rabbitmq' | 'apikeys';
 
-const NAV: { id: Section; label: string; icon: typeof WebhookIcon }[] = [
+const EVENTS_NAV: {
+  id: 'webhook' | 'websocket' | 'rabbitmq';
+  label: string;
+  icon: typeof WebhookIcon;
+}[] = [
   { id: 'webhook', label: 'Webhook', icon: WebhookIcon },
   { id: 'websocket', label: 'WebSocket', icon: Radio },
   { id: 'rabbitmq', label: 'RabbitMQ', icon: Rss },
@@ -61,7 +66,9 @@ export function InstanceSettingsSheet({
       <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-3xl">
         <SheetHeader className="border-b p-6 text-left">
           <SheetTitle>Configurações — {instance.name}</SheetTitle>
-          <SheetDescription>Entrega de eventos por Webhook, WebSocket ou RabbitMQ.</SheetDescription>
+          <SheetDescription>
+            Entrega de eventos por Webhook, WebSocket ou RabbitMQ.
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1">
@@ -69,7 +76,7 @@ export function InstanceSettingsSheet({
             <p className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground/60">
               Eventos
             </p>
-            {NAV.map((s) => {
+            {EVENTS_NAV.map((s) => {
               const on = config[s.id].enabled;
               return (
                 <button
@@ -94,6 +101,21 @@ export function InstanceSettingsSheet({
                 </button>
               );
             })}
+            <p className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground/60">
+              Segurança
+            </p>
+            <button
+              onClick={() => setSection('apikeys')}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+                section === 'apikeys'
+                  ? 'bg-accent font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+              )}
+            >
+              <KeyRound className="size-4" />
+              API keys
+            </button>
           </nav>
 
           <div className="min-w-0 flex-1 overflow-auto p-6">
@@ -127,6 +149,7 @@ export function InstanceSettingsSheet({
                 saved={savedAt === 'rabbitmq'}
               />
             )}
+            {section === 'apikeys' && <ApiKeysSection instance={instance} />}
           </div>
         </div>
       </SheetContent>
@@ -205,7 +228,11 @@ function EventsPicker({
             todos
           </button>
           <span className="text-muted-foreground/40">·</span>
-          <button type="button" className="text-primary hover:underline" onClick={() => onChange([])}>
+          <button
+            type="button"
+            className="text-primary hover:underline"
+            onClick={() => onChange([])}
+          >
             limpar
           </button>
         </div>
@@ -366,8 +393,8 @@ function WebSocketSection({
           {wsUrl}
         </code>
         <p>
-          A <code>apikey</code> pode ser a da instância ou a GLOBAL_API_KEY. Cada mensagem chega como{' '}
-          <code>{'{ instanceId, event, data, timestamp }'}</code>.
+          A <code>apikey</code> pode ser a da instância ou a GLOBAL_API_KEY. Cada mensagem chega
+          como <code>{'{ instanceId, event, data, timestamp }'}</code>.
         </p>
       </InfoBox>
       <div className={cn(!ws.enabled && 'pointer-events-none opacity-50')}>

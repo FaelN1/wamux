@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiKeyAction } from '@wamux/shared';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { SendMediaDto } from './dto/send-media.dto';
 import { SendTextDto } from './dto/send-text.dto';
 import { SendPollDto } from './dto/send-poll.dto';
@@ -17,48 +19,56 @@ export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
 
   @Post(':id/text')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia texto (com rate-limit e idempotência).' })
   sendText(@Param('id') id: string, @Body() dto: SendTextDto) {
     return this.messaging.sendText(id, dto);
   }
 
   @Post(':id/media')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia mídia (image/video/audio/document/sticker) por url ou base64.' })
   sendMedia(@Param('id') id: string, @Body() dto: SendMediaDto) {
     return this.messaging.sendMedia(id, dto);
   }
 
   @Post(':id/poll')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia enquete (voto coletado em GET :id/poll/:messageId).' })
   sendPoll(@Param('id') id: string, @Body() dto: SendPollDto) {
     return this.messaging.sendPoll(id, dto);
   }
 
   @Get(':id/poll/:messageId')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Resultado agregado de uma enquete.' })
   pollResults(@Param('id') id: string, @Param('messageId') messageId: string) {
     return this.messaging.pollResults(id, messageId);
   }
 
   @Post(':id/buttons')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia botões (422 se a engine não entrega; fallbackToText degrada).' })
   sendButtons(@Param('id') id: string, @Body() dto: SendButtonsDto) {
     return this.messaging.sendButtons(id, dto);
   }
 
   @Post(':id/list')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia lista (menu).' })
   sendList(@Param('id') id: string, @Body() dto: SendListDto) {
     return this.messaging.sendList(id, dto);
   }
 
   @Post(':id/pix')
+  @RequireScope(ApiKeyAction.SEND)
   @ApiOperation({ summary: 'Envia botão PIX (copia-e-cola). Baileys-only, com fallback.' })
   sendPix(@Param('id') id: string, @Body() dto: SendPixDto) {
     return this.messaging.sendPix(id, dto);
   }
 
   @Get(':id/status/:messageId')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Ack atual + histórico de timestamps de uma mensagem.' })
   async status(@Param('id') id: string, @Param('messageId') messageId: string) {
     const log = await this.messaging.messageStatus(id, messageId);
@@ -78,6 +88,7 @@ export class MessagingController {
 
   /** Status de um envio que caiu na fila (throttle). */
   @Get(':id/queue/:jobId')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Status de um envio enfileirado (throttle).' })
   queueStatus(@Param('jobId') jobId: string) {
     return this.messaging.queueStatus(jobId);

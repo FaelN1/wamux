@@ -11,8 +11,10 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { ApiKeyAction } from '@wamux/shared';
 import { GlobalApiKeyGuard } from '../common/guards/global-api-key.guard';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { ChangeProviderDto } from './dto/change-provider.dto';
 import { CreateInstanceDto } from './dto/create-instance.dto';
 import { SetWebhookDto } from './dto/set-webhook.dto';
@@ -61,6 +63,7 @@ export class InstanceController {
 
   @Get(':id')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.READ)
   async get(@Param('id') id: string) {
     const inst = await this.instances.findOne(id);
     const live = this.manager.getLive(id);
@@ -70,6 +73,7 @@ export class InstanceController {
   /** Inicia a conexão (restaura sessão ou inicia pareamento por QR). */
   @Post(':id/connect')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   async connect(@Param('id') id: string) {
     return this.manager.connect(id);
   }
@@ -77,6 +81,7 @@ export class InstanceController {
   /** Retorna o QR atual (string + PNG dataURL). Null quando não aplicável. */
   @Get(':id/qr')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   async qr(@Param('id') id: string) {
     const qr = await this.manager.getQRCode(id);
     return qr ?? { qr: null, qrImage: null, message: 'Sem QR (já conectado ou Cloud API)' };
@@ -84,6 +89,7 @@ export class InstanceController {
 
   @Post(':id/logout')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   @HttpCode(200)
   async logout(@Param('id') id: string) {
     await this.manager.logout(id);
@@ -92,6 +98,7 @@ export class InstanceController {
 
   @Put(':id/webhook')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.SETTING)
   async setWebhook(@Param('id') id: string, @Body() dto: SetWebhookDto) {
     const inst = await this.instances.setWebhook(id, dto.url, dto.events ?? []);
     // Expõe o segredo HMAC: cria na 1ª vez ou quando rotateSecret=true.
@@ -106,6 +113,7 @@ export class InstanceController {
   /** Whitelist/blacklist de JIDs. */
   @Put(':id/filters')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.SETTING)
   async setFilters(@Param('id') id: string, @Body() dto: SetFiltersDto) {
     const inst = await this.instances.setFilters(id, {
       allowJids: dto.allowJids ?? [],
@@ -119,6 +127,7 @@ export class InstanceController {
   /** Pairing por código de 8 dígitos (alternativa ao QR). */
   @Post(':id/pair-code')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   async pairCode(@Param('id') id: string, @Body() dto: PairCodeDto) {
     return this.manager.pairCode(id, dto.phone);
   }
@@ -126,12 +135,14 @@ export class InstanceController {
   /** DLQ de webhook desta instância. */
   @Get(':id/webhook/dlq')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.READ)
   listDlq(@Param('id') id: string) {
     return this.webhooks.listDlq(id);
   }
 
   @Post(':id/webhook/dlq/retry')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   @HttpCode(200)
   retryDlq(@Param('id') id: string) {
     return this.webhooks.retryDlq(id);
@@ -140,6 +151,7 @@ export class InstanceController {
   /** Perfil anti-ban da instância. Validado por Zod (estilo Settings). */
   @Put(':id/anti-ban')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.SETTING)
   async setAntiBan(@Param('id') id: string, @Body() body: unknown) {
     const parsed = zAntiBanUpdate.safeParse(body);
     if (!parsed.success) {
@@ -154,6 +166,7 @@ export class InstanceController {
   /** Config por instância: política de identidade (lid/phone/auto). */
   @Put(':id/settings')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.SETTING)
   async setSettings(@Param('id') id: string, @Body() dto: SetInstanceSettingsDto) {
     const inst = await this.instances.setIdentityMode(id, dto.identityMode ?? 'auto');
     return this.present(inst);
@@ -161,6 +174,7 @@ export class InstanceController {
 
   @Get(':id/anti-ban/status')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.READ)
   async antiBanStatus(@Param('id') id: string) {
     const inst = await this.instances.findOne(id);
     const cfg = this.antiBan.resolve(inst.config.antiBan as Partial<AntiBanConfig>);
@@ -185,6 +199,7 @@ export class InstanceController {
   /** Config de eventos (webhook + websocket + rabbitmq) da instância. */
   @Put(':id/events')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.SETTING)
   async setEvents(@Param('id') id: string, @Body() dto: SetEventsDto) {
     const inst = await this.instances.setEvents(id, {
       webhook: dto.webhook,
@@ -198,6 +213,7 @@ export class InstanceController {
   /** Matriz de recursos que a engine da instância entrega. */
   @Get(':id/capabilities')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.READ)
   async capabilities(@Param('id') id: string) {
     const provider = await this.manager.requireLive(id);
     return provider.capabilities;
@@ -206,6 +222,7 @@ export class InstanceController {
   /** Nome/foto da própria conta conectada. 501 uniforme se a engine não suportar. */
   @Get(':id/profile')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.READ)
   async profile(@Param('id') id: string) {
     const provider = await this.manager.requireLive(id);
     if (!provider.capabilities.profile || !provider.getProfile) {
@@ -217,6 +234,7 @@ export class InstanceController {
   /** Troca a engine (opcionalmente migrando credenciais, sem reparear). */
   @Post(':id/provider')
   @UseGuards(InstanceApiKeyGuard)
+  @RequireScope(ApiKeyAction.CONTROL)
   async changeProvider(@Param('id') id: string, @Body() dto: ChangeProviderDto) {
     return this.manager.changeProvider(id, dto.provider, dto.migrate ?? false);
   }

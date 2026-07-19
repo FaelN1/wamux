@@ -1,7 +1,9 @@
 import { Controller, Get, Param, Query, Res, StreamableFile, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiKeyAction } from '@wamux/shared';
 import { Response } from 'express';
 import { InstanceApiKeyGuard } from '../common/guards/instance-api-key.guard';
+import { RequireScope } from '../common/require-scope.decorator';
 import { MediaService } from './media.service';
 
 @ApiTags('Mídia')
@@ -12,6 +14,7 @@ export class MediaController {
   constructor(private readonly media: MediaService) {}
 
   @Get(':id/media/:messageId')
+  @RequireScope(ApiKeyAction.READ)
   @ApiOperation({ summary: 'Baixa a mídia de uma mensagem recebida (streaming ou base64).' })
   async download(
     @Param('id') id: string,
