@@ -8,7 +8,7 @@ import {
   useSendTemplate,
   type MessageTemplate,
 } from '@/api';
-import type { TemplateComponent } from '@wamux/shared';
+import type { TemplateButton, TemplateComponent } from '@wamux/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,8 +18,71 @@ import { cn } from '@/lib/utils';
 
 const CATEGORIES = ['MARKETING', 'UTILITY', 'AUTHENTICATION'] as const;
 const LANGS = ['pt_BR', 'en_US', 'es_ES', 'pt_PT', 'en_GB'];
+const HEADER_FORMATS = ['NONE', 'TEXT', 'IMAGE', 'VIDEO', 'DOCUMENT'] as const;
 
-/** cor do badge por status do template. */
+/** Limites oficiais da Meta impostos no builder. */
+const LIM = {
+  name: 512,
+  headerText: 60,
+  body: 1024,
+  footer: 60,
+  buttonsTotal: 10,
+  url: 2,
+  phone: 1,
+  copy: 1,
+  otp: 1,
+  buttonText: 25,
+};
+
+type BtnType = 'QUICK_REPLY' | 'URL' | 'PHONE_NUMBER' | 'COPY_CODE' | 'OTP' | 'FLOW';
+const BTN_LABEL: Record<BtnType, string> = {
+  QUICK_REPLY: 'Resposta rápida',
+  URL: 'Link (URL)',
+  PHONE_NUMBER: 'Telefone',
+  COPY_CODE: 'Copiar código',
+  OTP: 'OTP (senha)',
+  FLOW: 'Flow',
+};
+interface BtnDraft {
+  type: BtnType;
+  text: string;
+  url: string;
+  phone_number: string;
+  otp_type: 'COPY_CODE' | 'ONE_TAP' | 'ZERO_TAP';
+  flow_id: string;
+}
+const newBtn = (type: BtnType): BtnDraft => ({
+  type,
+  text: '',
+  url: '',
+  phone_number: '',
+  otp_type: 'COPY_CODE',
+  flow_id: '',
+});
+
+function toButton(b: BtnDraft): TemplateButton {
+  switch (b.type) {
+    case 'QUICK_REPLY':
+      return { type: 'QUICK_REPLY', text: b.text };
+    case 'URL':
+      return {
+        type: 'URL',
+        text: b.text,
+        url: b.url,
+        ...(b.url.includes('{{') ? { example: ['https://exemplo.com/x'] } : {}),
+      };
+    case 'PHONE_NUMBER':
+      return { type: 'PHONE_NUMBER', text: b.text, phone_number: b.phone_number };
+    case 'COPY_CODE':
+      return { type: 'COPY_CODE', ...(b.text ? { text: b.text } : {}) };
+    case 'OTP':
+      return { type: 'OTP', otp_type: b.otp_type };
+    case 'FLOW':
+      return { type: 'FLOW', text: b.text, ...(b.flow_id ? { flow_id: b.flow_id } : {}) };
+  }
+}
+
+// ── helpers de badge/preview ──
 function statusClass(status: string): string {
   if (status === 'APPROVED') return 'bg-emerald-500/15 text-emerald-500';
   if (status === 'PENDING' || status === 'IN_REVIEW' || status === 'APPEAL_REQUESTED')
@@ -32,15 +95,29 @@ function qualityClass(q?: string): string {
   if (q === 'RED') return 'bg-red-500/15 text-red-500';
   return 'bg-muted text-muted-foreground';
 }
-
-/** texto do BODY de um template, para preview. */
 function bodyText(t: MessageTemplate): string {
   const b = t.components?.find((c) => c.type === 'BODY') as { text?: string } | undefined;
   return b?.text ?? '';
 }
-/** nº de placeholders {{n}} no body — quantos params o envio precisa. */
+function templateButtons(t: MessageTemplate): TemplateButton[] {
+  const b = t.components?.find((c) => c.type === 'BUTTONS') as
+    { buttons?: TemplateButton[] } | undefined;
+  return b?.buttons ?? [];
+}
+function vars(text: string): string[] {
+  return text.match(/\{\{\s*\d+\s*\}\}/g) ?? [];
+}
 function paramCount(t: MessageTemplate): number {
-  return (bodyText(t).match(/\{\{\s*\d+\s*\}\}/g) ?? []).length;
+  return vars(bodyText(t)).length;
+}
+
+/** contador de caracteres com cor ao estourar. */
+function Counter({ n, max }: { n: number; max: number }) {
+  return (
+    <span className={cn('text-[10px]', n > max ? 'text-destructive' : 'text-muted-foreground')}>
+      {n}/{max}
+    </span>
+  );
 }
 
 export function TemplatesPage() {
@@ -63,41 +140,104 @@ export function TemplatesPage() {
   const provider = instances?.find((i) => i.id === instanceId)?.provider;
   const notCloud = provider && provider !== 'cloud';
 
-  // ── form de criação ──
+  // ── builder ──
   const [name, setName] = useState('');
   const [language, setLanguage] = useState('pt_BR');
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('MARKETING');
-  const [header, setHeader] = useState('');
+  const [headerFormat, setHeaderFormat] = useState<(typeof HEADER_FORMATS)[number]>('NONE');
+  const [headerText, setHeaderText] = useState('');
+  const [headerHandle, setHeaderHandle] = useState('');
+  const [headerExample, setHeaderExample] = useState('');
   const [body, setBody] = useState('');
+  const [bodyExamples, setBodyExamples] = useState<string[]>([]);
   const [footer, setFooter] = useState('');
+  const [buttons, setButtons] = useState<BtnDraft[]>([]);
+
+  const bodyVars = useMemo(() => vars(body), [body]);
+  const headerHasVar = headerFormat === 'TEXT' && vars(headerText).length > 0;
+  // mantém o array de exemplos do corpo do tamanho do nº de variáveis.
+  useEffect(() => {
+    setBodyExamples((prev) => bodyVars.map((_, i) => prev[i] ?? ''));
+  }, [bodyVars.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const btnCount = (ty: BtnType) => buttons.filter((b) => b.type === ty).length;
+  const canAdd = (ty: BtnType): boolean => {
+    if (buttons.length >= LIM.buttonsTotal) return false;
+    if (ty === 'URL') return btnCount('URL') < LIM.url;
+    if (ty === 'PHONE_NUMBER') return btnCount('PHONE_NUMBER') < LIM.phone;
+    if (ty === 'COPY_CODE') return btnCount('COPY_CODE') < LIM.copy;
+    if (ty === 'OTP') return btnCount('OTP') < LIM.otp;
+    return true;
+  };
+  const addBtn = (ty: BtnType) => canAdd(ty) && setButtons((b) => [...b, newBtn(ty)]);
+  const patchBtn = (i: number, patch: Partial<BtnDraft>) =>
+    setButtons((b) => b.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+  const rmBtn = (i: number) => setButtons((b) => b.filter((_, idx) => idx !== i));
+
+  const buttonsValid = buttons.every((b) => {
+    if (b.type === 'QUICK_REPLY' || b.type === 'FLOW') return !!b.text.trim();
+    if (b.type === 'URL') return !!b.text.trim() && !!b.url.trim();
+    if (b.type === 'PHONE_NUMBER') return !!b.text.trim() && !!b.phone_number.trim();
+    return true; // COPY_CODE / OTP
+  });
+
+  const invalid =
+    !instanceId ||
+    !name.trim() ||
+    !body.trim() ||
+    body.length > LIM.body ||
+    headerText.length > LIM.headerText ||
+    footer.length > LIM.footer ||
+    (headerFormat === 'TEXT' && !headerText.trim()) ||
+    (headerFormat !== 'NONE' && headerFormat !== 'TEXT' && !headerHandle.trim()) ||
+    !buttonsValid ||
+    createMut.isPending;
+
+  const resetForm = () => {
+    setName('');
+    setHeaderFormat('NONE');
+    setHeaderText('');
+    setHeaderHandle('');
+    setHeaderExample('');
+    setBody('');
+    setBodyExamples([]);
+    setFooter('');
+    setButtons([]);
+  };
 
   const create = () => {
     const components: TemplateComponent[] = [];
-    if (header.trim()) components.push({ type: 'HEADER', format: 'TEXT', text: header.trim() });
+    if (headerFormat === 'TEXT') {
+      components.push({
+        type: 'HEADER',
+        format: 'TEXT',
+        text: headerText.trim(),
+        ...(headerHasVar ? { example: { header_text: [headerExample || 'exemplo'] } } : {}),
+      });
+    } else if (headerFormat !== 'NONE') {
+      components.push({
+        type: 'HEADER',
+        format: headerFormat,
+        example: { header_handle: [headerHandle.trim()] },
+      });
+    }
     const bodyComp: TemplateComponent = { type: 'BODY', text: body.trim() };
-    const vars = body.match(/\{\{\s*\d+\s*\}\}/g) ?? [];
-    if (vars.length) {
-      // a Meta exige example quando há placeholders.
+    if (bodyVars.length) {
       (bodyComp as { example?: unknown }).example = {
-        body_text: [vars.map((_, i) => `exemplo${i + 1}`)],
+        body_text: [bodyExamples.map((e, i) => e || `exemplo${i + 1}`)],
       };
     }
     components.push(bodyComp);
     if (footer.trim()) components.push({ type: 'FOOTER', text: footer.trim() });
+    if (buttons.length) components.push({ type: 'BUTTONS', buttons: buttons.map(toButton) });
+
     createMut.mutate(
       { name: name.trim(), language, category, components },
-      {
-        onSuccess: () => {
-          setName('');
-          setHeader('');
-          setBody('');
-          setFooter('');
-        },
-      },
+      { onSuccess: resetForm },
     );
   };
 
-  // ── painel de envio ──
+  // ── envio ──
   const [sending, setSending] = useState<MessageTemplate | null>(null);
   const [sendTo, setSendTo] = useState('');
   const [sendParams, setSendParams] = useState('');
@@ -129,23 +269,22 @@ export function TemplatesPage() {
   };
 
   const list = templates.data ?? [];
-  const createDisabled = !instanceId || !name.trim() || !body.trim() || createMut.isPending;
-
   const sortedLangs = useMemo(
     () => (LANGS.includes(language) ? LANGS : [language, ...LANGS]),
     [language],
   );
 
+  const inputCls = 'h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm';
+
   return (
     <div className="space-y-6">
-      {/* controles */}
       <div className="flex flex-wrap items-center gap-3">
         <FileText className="size-5 text-primary" />
         <h1 className="text-lg font-semibold">Templates (Cloud API)</h1>
         <select
           value={instanceId}
           onChange={(e) => setInstanceId(e.target.value)}
-          className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
+          className={inputCls + ' w-auto'}
         >
           <option value="">— selecione a instância —</option>
           {(instances ?? []).map((i) => (
@@ -167,24 +306,29 @@ export function TemplatesPage() {
           <CardContent className="py-4 text-sm text-muted-foreground">
             Templates HSM são exclusivos da <b>Cloud API oficial</b> (Meta). A engine{' '}
             <b>{provider}</b> responde <code>501</code> — selecione (ou crie) uma instância{' '}
-            <code>cloud</code> para gerenciar templates.
+            <code>cloud</code>.
           </CardContent>
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
-        {/* criar */}
+      <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
+        {/* ── builder ── */}
         <Card className="h-fit">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Plus className="size-4 text-primary" /> Novo template
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
+            {/* identidade */}
             <div className="space-y-1.5">
-              <Label>Nome</Label>
+              <div className="flex items-center justify-between">
+                <Label>Nome</Label>
+                <Counter n={name.length} max={LIM.name} />
+              </div>
               <Input
                 value={name}
+                maxLength={LIM.name}
                 onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
                 placeholder="promo_verao"
               />
@@ -195,7 +339,7 @@ export function TemplatesPage() {
                 <select
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+                  className={inputCls}
                 >
                   {sortedLangs.map((l) => (
                     <option key={l}>{l}</option>
@@ -207,7 +351,7 @@ export function TemplatesPage() {
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value as (typeof CATEGORIES)[number])}
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+                  className={inputCls}
                 >
                   {CATEGORIES.map((c) => (
                     <option key={c}>{c}</option>
@@ -215,36 +359,205 @@ export function TemplatesPage() {
                 </select>
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label>Cabeçalho (opcional)</Label>
-              <Input
-                value={header}
-                onChange={(e) => setHeader(e.target.value)}
-                placeholder="Texto do topo"
-              />
+
+            {/* header */}
+            <div className="space-y-2 rounded-md border border-border/60 p-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Cabeçalho
+                </Label>
+                <select
+                  value={headerFormat}
+                  onChange={(e) =>
+                    setHeaderFormat(e.target.value as (typeof HEADER_FORMATS)[number])
+                  }
+                  className="h-7 rounded border border-input bg-transparent px-1.5 text-xs"
+                >
+                  {HEADER_FORMATS.map((f) => (
+                    <option key={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+              {headerFormat === 'TEXT' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-muted-foreground">
+                      Texto (até 1 variável {'{{1}}'})
+                    </span>
+                    <Counter n={headerText.length} max={LIM.headerText} />
+                  </div>
+                  <Input
+                    value={headerText}
+                    maxLength={LIM.headerText}
+                    onChange={(e) => setHeaderText(e.target.value)}
+                    placeholder="Olá, {{1}}!"
+                  />
+                  {headerHasVar && (
+                    <Input
+                      value={headerExample}
+                      onChange={(e) => setHeaderExample(e.target.value)}
+                      placeholder="exemplo p/ {{1}} (ex.: Maria)"
+                    />
+                  )}
+                </>
+              )}
+              {headerFormat !== 'NONE' && headerFormat !== 'TEXT' && (
+                <>
+                  <Input
+                    value={headerHandle}
+                    onChange={(e) => setHeaderHandle(e.target.value)}
+                    placeholder={`handle da mídia (${headerFormat})`}
+                  />
+                  <p className="text-[10px] text-amber-500">
+                    Cabeçalho de mídia exige um <b>handle</b> da Resumable Upload API (helper de
+                    upload é sub-tarefa pendente).
+                  </p>
+                </>
+              )}
             </div>
+
+            {/* body */}
             <div className="space-y-1.5">
-              <Label>Corpo</Label>
+              <div className="flex items-center justify-between">
+                <Label>Corpo</Label>
+                <Counter n={body.length} max={LIM.body} />
+              </div>
               <textarea
                 value={body}
+                maxLength={LIM.body}
                 onChange={(e) => setBody(e.target.value)}
                 rows={4}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
                 placeholder="Use {{1}} e ganhe {{2}} de desconto"
               />
-              <p className="text-xs text-muted-foreground">
-                Placeholders <code>{'{{1}}'}</code> viram parâmetros no envio.
-              </p>
+              {bodyVars.length > 0 && (
+                <div className="space-y-1.5 rounded-md bg-muted/40 p-2">
+                  <p className="text-[10px] text-muted-foreground">
+                    Exemplos das variáveis (a Meta exige):
+                  </p>
+                  {bodyVars.map((v, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="w-9 text-xs text-muted-foreground">{v}</span>
+                      <Input
+                        value={bodyExamples[i] ?? ''}
+                        onChange={(e) =>
+                          setBodyExamples((prev) =>
+                            prev.map((x, idx) => (idx === i ? e.target.value : x)),
+                          )
+                        }
+                        placeholder={`exemplo ${i + 1}`}
+                        className="h-8"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* footer */}
             <div className="space-y-1.5">
-              <Label>Rodapé (opcional)</Label>
+              <div className="flex items-center justify-between">
+                <Label>Rodapé (sem variáveis)</Label>
+                <Counter n={footer.length} max={LIM.footer} />
+              </div>
               <Input
                 value={footer}
+                maxLength={LIM.footer}
                 onChange={(e) => setFooter(e.target.value)}
                 placeholder="Responda SAIR para cancelar"
               />
             </div>
-            <Button onClick={create} disabled={createDisabled} className="w-full">
+
+            {/* buttons */}
+            <div className="space-y-2 rounded-md border border-border/60 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Botões ({buttons.length}/{LIM.buttonsTotal})
+                </Label>
+                <span className="text-[10px] text-muted-foreground">
+                  URL {btnCount('URL')}/{LIM.url} · Tel {btnCount('PHONE_NUMBER')}/{LIM.phone} · Cód{' '}
+                  {btnCount('COPY_CODE')}/{LIM.copy}
+                </span>
+              </div>
+
+              {buttons.map((b, i) => (
+                <div key={i} className="space-y-1.5 rounded border border-border/50 p-2">
+                  <div className="flex items-center justify-between">
+                    <Badge variant="secondary" className="text-[10px]">
+                      {BTN_LABEL[b.type]}
+                    </Badge>
+                    <button
+                      onClick={() => rmBtn(i)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                  {b.type !== 'OTP' && (
+                    <Input
+                      value={b.text}
+                      maxLength={LIM.buttonText}
+                      onChange={(e) => patchBtn(i, { text: e.target.value })}
+                      placeholder={b.type === 'COPY_CODE' ? 'rótulo (opcional)' : 'texto do botão'}
+                      className="h-8"
+                    />
+                  )}
+                  {b.type === 'URL' && (
+                    <Input
+                      value={b.url}
+                      onChange={(e) => patchBtn(i, { url: e.target.value })}
+                      placeholder="https://loja.com/{{1}}"
+                      className="h-8"
+                    />
+                  )}
+                  {b.type === 'PHONE_NUMBER' && (
+                    <Input
+                      value={b.phone_number}
+                      onChange={(e) => patchBtn(i, { phone_number: e.target.value })}
+                      placeholder="+5511999999999"
+                      className="h-8"
+                    />
+                  )}
+                  {b.type === 'OTP' && (
+                    <select
+                      value={b.otp_type}
+                      onChange={(e) =>
+                        patchBtn(i, { otp_type: e.target.value as BtnDraft['otp_type'] })
+                      }
+                      className={inputCls + ' h-8'}
+                    >
+                      <option value="COPY_CODE">COPY_CODE</option>
+                      <option value="ONE_TAP">ONE_TAP</option>
+                      <option value="ZERO_TAP">ZERO_TAP</option>
+                    </select>
+                  )}
+                  {b.type === 'FLOW' && (
+                    <Input
+                      value={b.flow_id}
+                      onChange={(e) => patchBtn(i, { flow_id: e.target.value })}
+                      placeholder="flow_id (opcional)"
+                      className="h-8"
+                    />
+                  )}
+                </div>
+              ))}
+
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {(Object.keys(BTN_LABEL) as BtnType[]).map((ty) => (
+                  <Button
+                    key={ty}
+                    size="sm"
+                    variant="outline"
+                    disabled={!canAdd(ty)}
+                    onClick={() => addBtn(ty)}
+                  >
+                    <Plus className="size-3.5" /> {BTN_LABEL[ty]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <Button onClick={create} disabled={invalid} className="w-full">
               <Plus /> Criar (entra em review)
             </Button>
             {createMut.isError && (
@@ -258,7 +571,7 @@ export function TemplatesPage() {
           </CardContent>
         </Card>
 
-        {/* lista */}
+        {/* ── lista + envio ── */}
         <div className="space-y-3">
           {sending && (
             <Card className="border-primary/40">
@@ -317,63 +630,75 @@ export function TemplatesPage() {
           {!templates.isLoading && !templates.isError && !list.length && (
             <Card>
               <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                Nenhum template ainda. Crie o primeiro ao lado.
+                Nenhum template ainda. Monte o primeiro ao lado.
               </CardContent>
             </Card>
           )}
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {list.map((t) => (
-              <Card key={t.id} className="flex flex-col">
-                <CardHeader className="pb-2">
-                  <CardTitle className="truncate text-sm" title={t.name}>
-                    {t.name}
-                  </CardTitle>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    <Badge className={statusClass(t.status)}>{t.status}</Badge>
-                    {t.quality_score && (
-                      <Badge className={qualityClass(t.quality_score)}>{t.quality_score}</Badge>
+            {list.map((t) => {
+              const btns = templateButtons(t);
+              return (
+                <Card key={t.id} className="flex flex-col">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="truncate text-sm" title={t.name}>
+                      {t.name}
+                    </CardTitle>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      <Badge className={statusClass(t.status)}>{t.status}</Badge>
+                      {t.quality_score && (
+                        <Badge className={qualityClass(t.quality_score)}>{t.quality_score}</Badge>
+                      )}
+                      <Badge variant="outline">{t.category}</Badge>
+                      <Badge variant="secondary">{t.language}</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex flex-1 flex-col gap-3">
+                    <p className="line-clamp-3 flex-1 text-xs text-muted-foreground">
+                      {bodyText(t) || '—'}
+                    </p>
+                    {btns.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {btns.map((b, i) => (
+                          <Badge key={i} variant="outline" className="text-[10px]">
+                            {'text' in b && b.text ? b.text : b.type}
+                          </Badge>
+                        ))}
+                      </div>
                     )}
-                    <Badge variant="outline">{t.category}</Badge>
-                    <Badge variant="secondary">{t.language}</Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-col gap-3">
-                  <p className="line-clamp-3 flex-1 text-xs text-muted-foreground">
-                    {bodyText(t) || '—'}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={t.status !== 'APPROVED'}
-                      title={
-                        t.status !== 'APPROVED' ? 'Só templates APPROVED podem ser enviados' : ''
-                      }
-                      onClick={() => {
-                        setSending(t);
-                        setSentMsg('');
-                        setSendParams('');
-                      }}
-                    >
-                      <Send className="size-4" /> Enviar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      disabled={deleteMut.isPending}
-                      onClick={() => {
-                        if (confirm(`Apagar o template "${t.name}" (todas as línguas)?`))
-                          deleteMut.mutate(t.name);
-                      }}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={t.status !== 'APPROVED'}
+                        title={
+                          t.status !== 'APPROVED' ? 'Só templates APPROVED podem ser enviados' : ''
+                        }
+                        onClick={() => {
+                          setSending(t);
+                          setSentMsg('');
+                          setSendParams('');
+                        }}
+                      >
+                        <Send className="size-4" /> Enviar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        disabled={deleteMut.isPending}
+                        onClick={() => {
+                          if (confirm(`Apagar o template "${t.name}" (todas as línguas)?`))
+                            deleteMut.mutate(t.name);
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         </div>
       </div>
