@@ -192,6 +192,13 @@ const PRESETS: Preset[] = [
   },
   {
     group: 'Mensagens',
+    label: 'Pedir localização (Cloud)',
+    method: 'POST',
+    path: '/messages/{id}/location-request',
+    body: '{ "to": "5511999999999", "text": "Compartilhe sua localização, por favor" }',
+  },
+  {
+    group: 'Mensagens',
     label: 'Status de entrega',
     method: 'GET',
     path: '/messages/{id}/status/{messageId}',

@@ -311,6 +311,8 @@ export interface WhatsAppProvider {
   sendContact?(input: SendContactInput): Promise<SendResult>;
   /** Posta um Status/Story (broadcast). */
   sendStatus?(input: SendStatusInput): Promise<SendResult>;
+  /** Pede a localização do usuário (Cloud API — interactive location_request). */
+  requestLocation?(to: string, text: string): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

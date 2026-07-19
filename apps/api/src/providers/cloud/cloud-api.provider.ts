@@ -9,7 +9,9 @@ import {
   NormalizedMessage,
   ProviderType,
   ReactMessageInput,
+  SendButtonsInput,
   SendContactInput,
+  SendListInput,
   SendLocationInput,
   SendMediaInput,
   SendResult,
@@ -39,6 +41,10 @@ export class CloudApiProvider extends BaseProvider {
     location: true,
     contact: true,
     media: true,
+    markRead: true,
+    block: true,
+    buttons: true,
+    list: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -214,6 +220,130 @@ export class CloudApiProvider extends BaseProvider {
       ...this.context(input.quotedMessageId),
     });
     return this.result(res.data, to);
+  }
+
+  /**
+   * Interactive `button` (≤3 reply) OU `cta_url` (1 url) — a Cloud não mistura
+   * os dois num payload. Fora desses casos, degrada para texto (fallbackToText).
+   */
+  async sendButtons(input: SendButtonsInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const replies = input.buttons.filter((b) => b.type === 'reply');
+    const urls = input.buttons.filter((b) => b.type === 'url');
+    let interactive: Record<string, unknown> | undefined;
+
+    if (replies.length === input.buttons.length && replies.length >= 1 && replies.length <= 3) {
+      interactive = {
+        type: 'button',
+        body: { text: input.text },
+        ...(input.footer ? { footer: { text: input.footer } } : {}),
+        action: {
+          buttons: replies.map((b) => ({
+            type: 'reply',
+            reply: { id: (b as { id?: string }).id, title: b.title },
+          })),
+        },
+      };
+    } else if (input.buttons.length === 1 && urls.length === 1) {
+      const u = urls[0] as { title: string; url: string };
+      interactive = {
+        type: 'cta_url',
+        body: { text: input.text },
+        ...(input.footer ? { footer: { text: input.footer } } : {}),
+        action: { name: 'cta_url', parameters: { display_text: u.title, url: u.url } },
+      };
+    }
+
+    if (!interactive) {
+      if (input.fallbackToText === false) {
+        throw new Error('Cloud API: só ≤3 botões reply OU exatamente 1 botão url');
+      }
+      return this.sendText({ to: input.to, text: this.renderFallbackText(input) });
+    }
+
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive,
+      ...this.context(input.quotedMessageId),
+    });
+    return this.result(res.data, to);
+  }
+
+  async sendList(input: SendListInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const interactive = {
+      type: 'list',
+      ...(input.title ? { header: { type: 'text', text: input.title } } : {}),
+      body: { text: input.text },
+      ...(input.footer ? { footer: { text: input.footer } } : {}),
+      action: {
+        button: input.buttonText,
+        sections: input.sections.map((s) => ({
+          ...(s.title ? { title: s.title } : {}),
+          rows: s.rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            ...(r.description ? { description: r.description } : {}),
+          })),
+        })),
+      },
+    };
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive,
+      ...this.context(input.quotedMessageId),
+    });
+    return this.result(res.data, to);
+  }
+
+  /**
+   * Marca lido via `status:read`. A Cloud exige o `message_id` INBOUND (não o
+   * chat) e aceita 1 por chamada — sem ids, não há o que marcar (no-op).
+   */
+  async markRead(_chatId: string, messageIds?: string[]): Promise<void> {
+    for (const id of messageIds ?? []) {
+      await this.http.post(`/${this.phoneNumberId}/messages`, {
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: id,
+      });
+    }
+  }
+
+  async blockContact(jid: string): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/block_users`, {
+      messaging_product: 'whatsapp',
+      block_users: [{ user: this.toNumber(jid) }],
+    });
+  }
+
+  async unblockContact(jid: string): Promise<void> {
+    await this.http.delete(`/${this.phoneNumberId}/block_users`, {
+      data: { messaging_product: 'whatsapp', block_users: [{ user: this.toNumber(jid) }] },
+    });
+  }
+
+  /** Pede a localização do usuário (interactive location_request_message). */
+  async requestLocation(to: string, text: string): Promise<SendResult> {
+    const num = this.toNumber(to);
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: num,
+      type: 'interactive',
+      interactive: {
+        type: 'location_request_message',
+        body: { text },
+        action: { name: 'send_location' },
+      },
+    });
+    return this.result(res.data, num);
   }
 
   /**

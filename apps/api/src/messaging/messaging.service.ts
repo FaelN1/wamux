@@ -36,6 +36,7 @@ import { DeleteMessageDto } from './dto/delete-message.dto';
 import { SendLocationDto } from './dto/send-location.dto';
 import { SendContactDto } from './dto/send-contact.dto';
 import { SendStatusDto } from './dto/send-status.dto';
+import { RequestLocationDto } from './dto/request-location.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -244,6 +245,12 @@ export class MessagingService {
       participant: dto.participant,
     };
     return p.deleteMessage!(input);
+  }
+
+  /** Pede a localização do usuário (Cloud API). Gated por capability + método. */
+  async requestLocation(instanceId: string, dto: RequestLocationDto): Promise<SendResult> {
+    const p = await this.cap(instanceId, 'location', (x) => x.requestLocation);
+    return p.requestLocation!(dto.to, dto.text);
   }
 
   /** Status/Stories é broadcast: chamada direta (fora da dispatch/inbox/rate-limit). */

@@ -15,6 +15,7 @@ import { DeleteMessageDto } from './dto/delete-message.dto';
 import { SendLocationDto } from './dto/send-location.dto';
 import { SendContactDto } from './dto/send-contact.dto';
 import { SendStatusDto } from './dto/send-status.dto';
+import { RequestLocationDto } from './dto/request-location.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -92,6 +93,13 @@ export class MessagingController {
   @ApiOperation({ summary: 'Posta um Status/Story (texto/imagem/vídeo/áudio). 501 na Cloud.' })
   sendStatus(@Param('id') id: string, @Body() dto: SendStatusDto) {
     return this.messaging.sendStatus(id, dto);
+  }
+
+  @Post(':id/location-request')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({ summary: 'Pede a localização do usuário (Cloud API). 501 nas demais engines.' })
+  requestLocation(@Param('id') id: string, @Body() dto: RequestLocationDto) {
+    return this.messaging.requestLocation(id, dto);
   }
 
   @Post(':id/reaction')
