@@ -36,6 +36,14 @@ import {
   PresenceInfo,
   DeleteMessageInput,
   EditMessageInput,
+  MessageTemplate,
+  CreateTemplateInput,
+  CreateTemplateResult,
+  EditTemplatePatch,
+  DeleteTemplateInput,
+  TemplateFilter,
+  SendTemplateInput,
+  TemplateAnalyticsQuery,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -313,6 +321,15 @@ export interface WhatsAppProvider {
   sendStatus?(input: SendStatusInput): Promise<SendResult>;
   /** Pede a localização do usuário (Cloud API — interactive location_request). */
   requestLocation?(to: string, text: string): Promise<SendResult>;
+
+  // ── templates HSM (gated por capabilities.templates — Cloud-only) ──
+  listTemplates?(filter?: TemplateFilter): Promise<MessageTemplate[]>;
+  getTemplate?(idOrName: string): Promise<MessageTemplate>;
+  createTemplate?(input: CreateTemplateInput): Promise<CreateTemplateResult>;
+  editTemplate?(id: string, patch: EditTemplatePatch): Promise<void>;
+  deleteTemplate?(input: DeleteTemplateInput): Promise<void>;
+  sendTemplate?(input: SendTemplateInput): Promise<SendResult>;
+  templateAnalytics?(query: TemplateAnalyticsQuery): Promise<unknown>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

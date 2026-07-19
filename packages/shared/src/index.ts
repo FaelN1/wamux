@@ -5,6 +5,7 @@ export * from './groups';
 export * from './communities';
 export * from './profile';
 export * from './capabilities';
+export * from './templates';
 export * from './filters';
 export * from './anti-ban';
 export * from './instance';

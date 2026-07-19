@@ -96,6 +96,10 @@ export enum WebhookEvent {
   // etiquetas
   LABELS_EDIT = 'labels.edit',
   LABELS_ASSOCIATION = 'labels.association',
+  // templates (Cloud API)
+  TEMPLATE_STATUS_UPDATE = 'template.status_update',
+  TEMPLATE_QUALITY_UPDATE = 'template.quality_update',
+  TEMPLATE_CATEGORY_UPDATE = 'template.category_update',
   // sistema
   /** freio anti-ban (auto-throttle) acionado. */
   ANTIBAN_ALERT = 'antiban.alert',

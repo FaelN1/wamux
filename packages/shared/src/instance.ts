@@ -199,6 +199,28 @@ export const WEBHOOK_EVENTS: WebhookEventMeta[] = [
     category: 'Etiquetas',
     evolution: 'LABELS_ASSOCIATION',
   },
+  // ── Templates (Cloud API) ──
+  {
+    value: WebhookEvent.TEMPLATE_STATUS_UPDATE,
+    label: 'Template: status',
+    description: 'Aprovação/rejeição/pausa de um template HSM (Cloud API).',
+    category: 'Templates',
+    evolution: 'TEMPLATE_STATUS_UPDATE',
+  },
+  {
+    value: WebhookEvent.TEMPLATE_QUALITY_UPDATE,
+    label: 'Template: qualidade',
+    description: 'Mudança de score de qualidade (GREEN/YELLOW/RED) de um template.',
+    category: 'Templates',
+    evolution: 'TEMPLATE_QUALITY_UPDATE',
+  },
+  {
+    value: WebhookEvent.TEMPLATE_CATEGORY_UPDATE,
+    label: 'Template: categoria',
+    description: 'Recategorização de um template (ex.: UTILITY → MARKETING).',
+    category: 'Templates',
+    evolution: 'TEMPLATE_CATEGORY_UPDATE',
+  },
   // ── Sistema ──
   {
     value: WebhookEvent.ANTIBAN_ALERT,

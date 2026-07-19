@@ -328,6 +328,47 @@ const PRESETS: Preset[] = [
     method: 'DELETE',
     path: '/instances/{id}/newsletters/{jid}/follow',
   },
+  // Templates (Cloud API)
+  { group: 'Templates', label: 'Listar', method: 'GET', path: '/instances/{id}/templates' },
+  {
+    group: 'Templates',
+    label: 'Criar',
+    method: 'POST',
+    path: '/instances/{id}/templates',
+    body: '{ "name": "promo_teste", "language": "pt_BR", "category": "MARKETING", "components": [{ "type": "BODY", "text": "Use {{1}} e ganhe {{2}}", "example": { "body_text": [["CUPOM", "25%"]] } }] }',
+  },
+  {
+    group: 'Templates',
+    label: 'Detalhe (id ou nome)',
+    method: 'GET',
+    path: '/instances/{id}/templates/{idOrName}',
+  },
+  {
+    group: 'Templates',
+    label: 'Editar (category/components)',
+    method: 'POST',
+    path: '/instances/{id}/templates/{templateId}',
+    body: '{ "category": "UTILITY" }',
+  },
+  {
+    group: 'Templates',
+    label: 'Apagar (por nome)',
+    method: 'DELETE',
+    path: '/instances/{id}/templates?name=promo_teste',
+  },
+  {
+    group: 'Templates',
+    label: 'Enviar',
+    method: 'POST',
+    path: '/instances/{id}/templates/send',
+    body: '{ "to": "5511999999999", "name": "promo_teste", "language": "pt_BR", "components": [{ "type": "body", "parameters": [{ "type": "text", "text": "CUPOM" }, { "type": "text", "text": "25%" }] }] }',
+  },
+  {
+    group: 'Templates',
+    label: 'Analytics',
+    method: 'GET',
+    path: '/instances/{id}/templates/analytics?start=1720000000&end=1725000000&templateIds=123456',
+  },
   // Grupos
   { group: 'Grupos', label: 'Listar', method: 'GET', path: '/instances/{id}/groups' },
   {

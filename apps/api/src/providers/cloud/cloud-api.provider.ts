@@ -4,7 +4,12 @@ import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
   ConnectionStatus,
+  CreateTemplateInput,
+  CreateTemplateResult,
+  DeleteTemplateInput,
+  EditTemplatePatch,
   MessageAckStatus,
+  MessageTemplate,
   MessageType,
   NormalizedMessage,
   ProviderType,
@@ -15,7 +20,11 @@ import {
   SendLocationInput,
   SendMediaInput,
   SendResult,
+  SendTemplateInput,
   SendTextInput,
+  TemplateAnalyticsQuery,
+  TemplateFilter,
+  WebhookEvent,
 } from '../provider.types';
 
 /**
@@ -45,6 +54,7 @@ export class CloudApiProvider extends BaseProvider {
     block: true,
     buttons: true,
     list: true,
+    templates: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -346,6 +356,89 @@ export class CloudApiProvider extends BaseProvider {
     return this.result(res.data, num);
   }
 
+  // ── templates HSM (management token = WABA; send = messaging token) ──
+
+  private readonly TEMPLATE_FIELDS =
+    'id,name,language,category,status,quality_score,components,parameter_format';
+
+  async listTemplates(filter?: TemplateFilter): Promise<MessageTemplate[]> {
+    const params: Record<string, string> = { fields: this.TEMPLATE_FIELDS, limit: '100' };
+    if (filter?.category) params.category = filter.category;
+    if (filter?.status) params.status = filter.status;
+    if (filter?.language) params.language = filter.language;
+    if (filter?.name) params.name = filter.name;
+    const res = await this.mgmt.get(`/${this.wabaId}/message_templates`, { params });
+    return ((res.data as { data?: MessageTemplate[] })?.data ?? []) as MessageTemplate[];
+  }
+
+  async getTemplate(idOrName: string): Promise<MessageTemplate> {
+    if (/^\d+$/.test(idOrName)) {
+      const res = await this.mgmt.get(`/${idOrName}`, { params: { fields: this.TEMPLATE_FIELDS } });
+      return res.data as MessageTemplate;
+    }
+    const found = (await this.listTemplates({ name: idOrName })).find((t) => t.name === idOrName);
+    if (!found) throw new Error(`Template "${idOrName}" não encontrado`);
+    return found;
+  }
+
+  async createTemplate(input: CreateTemplateInput): Promise<CreateTemplateResult> {
+    const res = await this.mgmt.post(`/${this.wabaId}/message_templates`, {
+      name: input.name,
+      language: input.language,
+      category: input.category,
+      components: input.components,
+      ...(input.parameter_format ? { parameter_format: input.parameter_format } : {}),
+      ...(input.allow_category_change != null
+        ? { allow_category_change: input.allow_category_change }
+        : {}),
+    });
+    const d = res.data as CreateTemplateResult;
+    return { id: d?.id, status: d?.status, category: d?.category };
+  }
+
+  /** Só `category`/`components`, e só se o template estiver APPROVED/REJECTED. */
+  async editTemplate(id: string, patch: EditTemplatePatch): Promise<void> {
+    await this.mgmt.post(`/${id}`, {
+      ...(patch.category ? { category: patch.category } : {}),
+      ...(patch.components ? { components: patch.components } : {}),
+    });
+  }
+
+  /** Sem `hsmId` apaga TODAS as línguas do nome; com `hsmId`, só aquele locale. */
+  async deleteTemplate(input: DeleteTemplateInput): Promise<void> {
+    const params: Record<string, string> = { name: input.name };
+    if (input.hsmId) params.hsm_id = input.hsmId;
+    await this.mgmt.delete(`/${this.wabaId}/message_templates`, { params });
+  }
+
+  async sendTemplate(input: SendTemplateInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to,
+      type: 'template',
+      template: {
+        name: input.name,
+        language: { code: input.language },
+        ...(input.components ? { components: input.components } : {}),
+      },
+      ...this.context(input.quotedMessageId),
+    });
+    return this.result(res.data, to);
+  }
+
+  async templateAnalytics(query: TemplateAnalyticsQuery): Promise<unknown> {
+    const params: Record<string, string> = {
+      start: String(query.start),
+      end: String(query.end),
+      granularity: query.granularity ?? 'DAILY',
+      template_ids: JSON.stringify(query.templateIds),
+    };
+    if (query.metricTypes?.length) params.metric_types = JSON.stringify(query.metricTypes);
+    const res = await this.mgmt.get(`/${this.wabaId}/template_analytics`, { params });
+    return res.data;
+  }
+
   /**
    * Baixa a mídia de uma mensagem inbound. Dois passos: GET /{media-id} devolve
    * uma URL assinada (expira em ~5 min) + metadados; o download real exige o
@@ -390,6 +483,15 @@ export class CloudApiProvider extends BaseProvider {
         switch (change.field) {
           case 'messages':
             this.handleMessagesChange(change.value);
+            break;
+          case 'message_template_status_update':
+            this.emitWebhook(WebhookEvent.TEMPLATE_STATUS_UPDATE, change.value);
+            break;
+          case 'message_template_quality_update':
+            this.emitWebhook(WebhookEvent.TEMPLATE_QUALITY_UPDATE, change.value);
+            break;
+          case 'template_category_update':
+            this.emitWebhook(WebhookEvent.TEMPLATE_CATEGORY_UPDATE, change.value);
             break;
           default:
             this.logger.debug(`[cloud] webhook field não tratado: ${change.field}`);

@@ -52,6 +52,8 @@ export interface ProviderCapabilities {
   contact?: boolean;
   /** postar Status/Stories (broadcast). */
   status?: boolean;
+  /** templates HSM (Cloud API oficial). */
+  templates?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

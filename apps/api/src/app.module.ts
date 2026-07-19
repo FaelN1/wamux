@@ -21,6 +21,7 @@ import { ContactsModule } from './contacts/contacts.module';
 import { NewsletterModule } from './newsletter/newsletter.module';
 import { GroupsModule } from './groups/groups.module';
 import { CommunitiesModule } from './communities/communities.module';
+import { TemplatesModule } from './templates/templates.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
@@ -84,6 +85,7 @@ import { McpModule } from './mcp/mcp.module';
     NewsletterModule,
     GroupsModule,
     CommunitiesModule,
+    TemplatesModule,
     HistoryModule,
     StatsModule,
     HealthModule,
