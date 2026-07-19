@@ -1,5 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Plus, RefreshCw, Send, Trash2, X } from 'lucide-react';
+import {
+  ChevronLeft,
+  Copy,
+  ExternalLink,
+  FileText,
+  Image as ImageIcon,
+  Phone,
+  Plus,
+  Reply,
+  RefreshCw,
+  Send,
+  Trash2,
+  Video,
+  X,
+} from 'lucide-react';
 import {
   useInstances,
   useTemplates,
@@ -117,6 +131,100 @@ function Counter({ n, max }: { n: number; max: number }) {
     <span className={cn('text-[10px]', n > max ? 'text-destructive' : 'text-muted-foreground')}>
       {n}/{max}
     </span>
+  );
+}
+
+/** substitui {{n}} pelo exemplo correspondente (fallback: mantém o token). */
+function fillVars(text: string, examples: string[]): string {
+  return text.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => examples[Number(n) - 1] || `{{${n}}}`);
+}
+
+const BTN_ICON: Partial<Record<BtnType, typeof Reply>> = {
+  QUICK_REPLY: Reply,
+  URL: ExternalLink,
+  PHONE_NUMBER: Phone,
+  COPY_CODE: Copy,
+  OTP: Copy,
+};
+const MEDIA_ICON = { IMAGE: ImageIcon, VIDEO: Video, DOCUMENT: FileText } as const;
+
+interface PreviewProps {
+  headerFormat: (typeof HEADER_FORMATS)[number];
+  headerText: string;
+  headerExample: string;
+  body: string;
+  bodyExamples: string[];
+  footer: string;
+  buttons: BtnDraft[];
+}
+
+/** Mock de telefone WhatsApp com preview ao vivo do template sendo montado. */
+function TemplatePreview(p: PreviewProps) {
+  const filledHeader = p.headerFormat === 'TEXT' ? fillVars(p.headerText, [p.headerExample]) : '';
+  const filledBody = fillVars(p.body, p.bodyExamples);
+  const isMedia = p.headerFormat !== 'NONE' && p.headerFormat !== 'TEXT';
+  const MediaIcon = isMedia ? MEDIA_ICON[p.headerFormat as keyof typeof MEDIA_ICON] : null;
+
+  // WhatsApp mostra até 3 botões; acima disso, colapsa em "Ver todas as opções".
+  const collapse = p.buttons.length > 3;
+  const shown = collapse ? p.buttons.slice(0, 2) : p.buttons;
+  const btnLabel = (b: BtnDraft) =>
+    b.text.trim() ||
+    (b.type === 'COPY_CODE' || b.type === 'OTP' ? 'Copiar código' : BTN_LABEL[b.type]);
+
+  return (
+    <div className="mx-auto w-[300px] select-none overflow-hidden rounded-[2rem] border-[6px] border-neutral-900 bg-neutral-900 shadow-xl">
+      {/* barra do topo */}
+      <div className="flex items-center gap-2 bg-[#075E54] px-3 py-2.5 text-white">
+        <ChevronLeft className="size-4 opacity-80" />
+        <div className="size-7 rounded-full bg-white/25" />
+        <div className="leading-tight">
+          <div className="text-sm font-medium">Prévia</div>
+          <div className="text-[10px] text-white/70">conta business</div>
+        </div>
+      </div>
+      {/* área do chat */}
+      <div className="min-h-[380px] space-y-1.5 bg-[#ECE5DD] p-3">
+        <div className="max-w-[90%] rounded-lg rounded-tl-none bg-white p-1.5 shadow-sm">
+          {isMedia && MediaIcon && (
+            <div className="mb-1 flex h-24 flex-col items-center justify-center gap-1 rounded bg-black/[0.06] text-neutral-400">
+              <MediaIcon className="size-7" />
+              <span className="text-[10px]">{p.headerFormat}</span>
+            </div>
+          )}
+          <div className="px-1 pb-1">
+            {filledHeader && (
+              <div className="mb-1 text-[13px] font-semibold text-neutral-900">{filledHeader}</div>
+            )}
+            <div className="whitespace-pre-wrap break-words text-[13px] leading-snug text-neutral-800">
+              {filledBody || <span className="text-neutral-400">Prévia do corpo…</span>}
+            </div>
+            {p.footer && <div className="mt-1.5 text-[11px] text-neutral-400">{p.footer}</div>}
+            <div className="mt-0.5 text-right text-[10px] text-neutral-400">agora</div>
+          </div>
+        </div>
+        {shown.length > 0 && (
+          <div className="max-w-[90%] space-y-0.5">
+            {shown.map((b, i) => {
+              const Icon = BTN_ICON[b.type];
+              return (
+                <div
+                  key={i}
+                  className="flex items-center justify-center gap-1.5 rounded-lg bg-white py-2 text-[13px] font-medium text-[#00A5F4] shadow-sm"
+                >
+                  {Icon && <Icon className="size-3.5" />} {btnLabel(b)}
+                </div>
+              );
+            })}
+            {collapse && (
+              <div className="flex items-center justify-center rounded-lg bg-white py-2 text-[13px] font-medium text-[#00A5F4] shadow-sm">
+                Ver todas as opções
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -311,7 +419,7 @@ export function TemplatesPage() {
         </Card>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,440px)_320px]">
         {/* ── builder ── */}
         <Card className="h-fit">
           <CardHeader>
@@ -571,135 +679,146 @@ export function TemplatesPage() {
           </CardContent>
         </Card>
 
-        {/* ── lista + envio ── */}
-        <div className="space-y-3">
-          {sending && (
-            <Card className="border-primary/40">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center justify-between text-base">
-                  <span className="flex items-center gap-2">
-                    <Send className="size-4 text-primary" /> Enviar «{sending.name}»
-                  </span>
-                  <button
-                    onClick={() => setSending(null)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="size-4" />
-                  </button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
+        {/* ── preview ao vivo, ao lado do formulário ── */}
+        <div className="h-fit xl:sticky xl:top-4">
+          <TemplatePreview
+            headerFormat={headerFormat}
+            headerText={headerText}
+            headerExample={headerExample}
+            body={body}
+            bodyExamples={bodyExamples}
+            footer={footer}
+            buttons={buttons}
+          />
+        </div>
+      </div>
+
+      {/* ── lista + envio (largura cheia) ── */}
+      <div className="space-y-3">
+        {sending && (
+          <Card className="border-primary/40">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center justify-between text-base">
+                <span className="flex items-center gap-2">
+                  <Send className="size-4 text-primary" /> Enviar «{sending.name}»
+                </span>
+                <button
+                  onClick={() => setSending(null)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="size-4" />
+                </button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Destinatário (número)</Label>
+                <Input
+                  value={sendTo}
+                  onChange={(e) => setSendTo(e.target.value)}
+                  placeholder="5511999999999"
+                />
+              </div>
+              {paramCount(sending) > 0 && (
                 <div className="space-y-1.5">
-                  <Label>Destinatário (número)</Label>
+                  <Label>Parâmetros do corpo ({paramCount(sending)}), separados por vírgula</Label>
                   <Input
-                    value={sendTo}
-                    onChange={(e) => setSendTo(e.target.value)}
-                    placeholder="5511999999999"
+                    value={sendParams}
+                    onChange={(e) => setSendParams(e.target.value)}
+                    placeholder="CUPOM, 25%"
                   />
                 </div>
-                {paramCount(sending) > 0 && (
-                  <div className="space-y-1.5">
-                    <Label>
-                      Parâmetros do corpo ({paramCount(sending)}), separados por vírgula
-                    </Label>
-                    <Input
-                      value={sendParams}
-                      onChange={(e) => setSendParams(e.target.value)}
-                      placeholder="CUPOM, 25%"
-                    />
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <Button onClick={doSend} disabled={!sendTo.trim() || sendMut.isPending}>
-                    <Send /> Enviar
-                  </Button>
-                  {sentMsg && <span className="text-xs text-muted-foreground">{sentMsg}</span>}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+              )}
+              <div className="flex items-center gap-2">
+                <Button onClick={doSend} disabled={!sendTo.trim() || sendMut.isPending}>
+                  <Send /> Enviar
+                </Button>
+                {sentMsg && <span className="text-xs text-muted-foreground">{sentMsg}</span>}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-          {templates.isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
-          {templates.isError && !notCloud && (
-            <Card>
-              <CardContent className="py-4 text-sm text-destructive">
-                {(templates.error as Error).message}
-              </CardContent>
-            </Card>
-          )}
-          {!templates.isLoading && !templates.isError && !list.length && (
-            <Card>
-              <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                Nenhum template ainda. Monte o primeiro ao lado.
-              </CardContent>
-            </Card>
-          )}
+        {templates.isLoading && <p className="text-sm text-muted-foreground">Carregando…</p>}
+        {templates.isError && !notCloud && (
+          <Card>
+            <CardContent className="py-4 text-sm text-destructive">
+              {(templates.error as Error).message}
+            </CardContent>
+          </Card>
+        )}
+        {!templates.isLoading && !templates.isError && !list.length && (
+          <Card>
+            <CardContent className="py-6 text-center text-sm text-muted-foreground">
+              Nenhum template ainda. Monte o primeiro ao lado.
+            </CardContent>
+          </Card>
+        )}
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {list.map((t) => {
-              const btns = templateButtons(t);
-              return (
-                <Card key={t.id} className="flex flex-col">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="truncate text-sm" title={t.name}>
-                      {t.name}
-                    </CardTitle>
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      <Badge className={statusClass(t.status)}>{t.status}</Badge>
-                      {t.quality_score && (
-                        <Badge className={qualityClass(t.quality_score)}>{t.quality_score}</Badge>
-                      )}
-                      <Badge variant="outline">{t.category}</Badge>
-                      <Badge variant="secondary">{t.language}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="flex flex-1 flex-col gap-3">
-                    <p className="line-clamp-3 flex-1 text-xs text-muted-foreground">
-                      {bodyText(t) || '—'}
-                    </p>
-                    {btns.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {btns.map((b, i) => (
-                          <Badge key={i} variant="outline" className="text-[10px]">
-                            {'text' in b && b.text ? b.text : b.type}
-                          </Badge>
-                        ))}
-                      </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {list.map((t) => {
+            const btns = templateButtons(t);
+            return (
+              <Card key={t.id} className="flex flex-col">
+                <CardHeader className="pb-2">
+                  <CardTitle className="truncate text-sm" title={t.name}>
+                    {t.name}
+                  </CardTitle>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <Badge className={statusClass(t.status)}>{t.status}</Badge>
+                    {t.quality_score && (
+                      <Badge className={qualityClass(t.quality_score)}>{t.quality_score}</Badge>
                     )}
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={t.status !== 'APPROVED'}
-                        title={
-                          t.status !== 'APPROVED' ? 'Só templates APPROVED podem ser enviados' : ''
-                        }
-                        onClick={() => {
-                          setSending(t);
-                          setSentMsg('');
-                          setSendParams('');
-                        }}
-                      >
-                        <Send className="size-4" /> Enviar
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive"
-                        disabled={deleteMut.isPending}
-                        onClick={() => {
-                          if (confirm(`Apagar o template "${t.name}" (todas as línguas)?`))
-                            deleteMut.mutate(t.name);
-                        }}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+                    <Badge variant="outline">{t.category}</Badge>
+                    <Badge variant="secondary">{t.language}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex flex-1 flex-col gap-3">
+                  <p className="line-clamp-3 flex-1 text-xs text-muted-foreground">
+                    {bodyText(t) || '—'}
+                  </p>
+                  {btns.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {btns.map((b, i) => (
+                        <Badge key={i} variant="outline" className="text-[10px]">
+                          {'text' in b && b.text ? b.text : b.type}
+                        </Badge>
+                      ))}
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={t.status !== 'APPROVED'}
+                      title={
+                        t.status !== 'APPROVED' ? 'Só templates APPROVED podem ser enviados' : ''
+                      }
+                      onClick={() => {
+                        setSending(t);
+                        setSentMsg('');
+                        setSendParams('');
+                      }}
+                    >
+                      <Send className="size-4" /> Enviar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      disabled={deleteMut.isPending}
+                      onClick={() => {
+                        if (confirm(`Apagar o template "${t.name}" (todas as línguas)?`))
+                          deleteMut.mutate(t.name);
+                      }}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </div>
     </div>
