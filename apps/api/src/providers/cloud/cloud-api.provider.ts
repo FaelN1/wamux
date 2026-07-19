@@ -4,15 +4,22 @@ import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
   ConnectionStatus,
+  ConversationAnalyticsQuery,
   CreateTemplateInput,
   CreateTemplateResult,
   DeleteTemplateInput,
   EditTemplatePatch,
   MessageAckStatus,
   MessageTemplate,
+  MessagingAnalyticsQuery,
   MessageType,
   NormalizedMessage,
+  PhoneNumberInfo,
+  ProfileInfo,
   ProviderType,
+  RegisterNumberInput,
+  RequestCodeInput,
+  UpdateProfileInput,
   ReactMessageInput,
   SendButtonsInput,
   SendContactInput,
@@ -55,6 +62,9 @@ export class CloudApiProvider extends BaseProvider {
     buttons: true,
     list: true,
     templates: true,
+    profile: true,
+    updateProfile: true,
+    cloudAccount: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -436,6 +446,129 @@ export class CloudApiProvider extends BaseProvider {
     };
     if (query.metricTypes?.length) params.metric_types = JSON.stringify(query.metricTypes);
     const res = await this.mgmt.get(`/${this.wabaId}/template_analytics`, { params });
+    return res.data;
+  }
+
+  // ── perfil de negócio (messaging token, phoneNumberId) ──
+
+  async getProfile(): Promise<ProfileInfo> {
+    const res = await this.http.get(`/${this.phoneNumberId}/whatsapp_business_profile`, {
+      params: { fields: 'about,address,description,email,profile_picture_url,websites,vertical' },
+    });
+    const p = ((res.data as { data?: Record<string, unknown>[] })?.data?.[0] ?? {}) as Record<
+      string,
+      unknown
+    >;
+    return {
+      jid: this.phoneNumberId,
+      status: p.about as string | undefined,
+      profilePicUrl: p.profile_picture_url as string | undefined,
+    };
+  }
+
+  async updateProfile(input: UpdateProfileInput): Promise<void> {
+    const body: Record<string, unknown> = { messaging_product: 'whatsapp' };
+    if (input.about != null) body.about = input.about;
+    if (input.address != null) body.address = input.address;
+    if (input.description != null) body.description = input.description;
+    if (input.email != null) body.email = input.email;
+    if (input.vertical != null) body.vertical = input.vertical;
+    if (input.websites != null) body.websites = input.websites;
+    if (input.profilePictureHandle != null) {
+      body.profile_picture_handle = input.profilePictureHandle;
+    }
+    await this.http.post(`/${this.phoneNumberId}/whatsapp_business_profile`, body);
+  }
+
+  // ── conta/WABA (management token; onboarding usa messaging token) ──
+
+  private readonly PHONE_FIELDS =
+    'verified_name,display_phone_number,quality_rating,code_verification_status,name_status,messaging_limit_tier,throughput,platform_type';
+
+  async listPhoneNumbers(): Promise<PhoneNumberInfo[]> {
+    const res = await this.mgmt.get(`/${this.wabaId}/phone_numbers`);
+    return ((res.data as { data?: PhoneNumberInfo[] })?.data ?? []) as PhoneNumberInfo[];
+  }
+
+  async getPhoneNumber(): Promise<PhoneNumberInfo> {
+    const res = await this.mgmt.get(`/${this.phoneNumberId}`, {
+      params: { fields: this.PHONE_FIELDS },
+    });
+    return { id: this.phoneNumberId, ...(res.data as object) } as PhoneNumberInfo;
+  }
+
+  async requestVerificationCode(input: RequestCodeInput): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/request_code`, {
+      code_method: input.codeMethod,
+      language: input.language,
+    });
+  }
+
+  async verifyCode(code: string): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/verify_code`, { code });
+  }
+
+  async registerNumber(input: RegisterNumberInput): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/register`, {
+      messaging_product: 'whatsapp',
+      pin: input.pin,
+      ...(input.dataLocalizationRegion
+        ? { data_localization_region: input.dataLocalizationRegion }
+        : {}),
+    });
+  }
+
+  async deregisterNumber(): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/deregister`, {});
+  }
+
+  async setTwoStepPin(pin: string): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}`, { pin });
+  }
+
+  async getWabaInfo(): Promise<unknown> {
+    const res = await this.mgmt.get(`/${this.wabaId}`, {
+      params: {
+        fields:
+          'id,name,currency,timezone_id,account_review_status,business_verification_status,country,message_template_namespace',
+      },
+    });
+    return res.data;
+  }
+
+  async subscribeApp(): Promise<unknown> {
+    const res = await this.mgmt.post(`/${this.wabaId}/subscribed_apps`, {});
+    return res.data;
+  }
+
+  async listSubscribedApps(): Promise<unknown> {
+    const res = await this.mgmt.get(`/${this.wabaId}/subscribed_apps`);
+    return res.data;
+  }
+
+  async unsubscribeApp(): Promise<void> {
+    await this.mgmt.delete(`/${this.wabaId}/subscribed_apps`);
+  }
+
+  async messagingAnalytics(query: MessagingAnalyticsQuery): Promise<unknown> {
+    const field =
+      `analytics.start(${query.start}).end(${query.end}).granularity(${query.granularity ?? 'DAY'})` +
+      (query.phoneNumbers?.length ? `.phone_numbers(${JSON.stringify(query.phoneNumbers)})` : '') +
+      (query.productTypes?.length ? `.product_types(${JSON.stringify(query.productTypes)})` : '') +
+      (query.countryCodes?.length ? `.country_codes(${JSON.stringify(query.countryCodes)})` : '');
+    const res = await this.mgmt.get(`/${this.wabaId}`, { params: { fields: field } });
+    return res.data;
+  }
+
+  async conversationAnalytics(query: ConversationAnalyticsQuery): Promise<unknown> {
+    const field =
+      `conversation_analytics.start(${query.start}).end(${query.end}).granularity(${query.granularity ?? 'DAILY'})` +
+      (query.metricTypes?.length ? `.metric_types(${JSON.stringify(query.metricTypes)})` : '') +
+      (query.conversationCategories?.length
+        ? `.conversation_categories(${JSON.stringify(query.conversationCategories)})`
+        : '') +
+      (query.dimensions?.length ? `.dimensions(${JSON.stringify(query.dimensions)})` : '');
+    const res = await this.mgmt.get(`/${this.wabaId}`, { params: { fields: field } });
     return res.data;
   }
 

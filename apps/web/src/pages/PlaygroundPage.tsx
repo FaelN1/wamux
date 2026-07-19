@@ -369,6 +369,71 @@ const PRESETS: Preset[] = [
     method: 'GET',
     path: '/instances/{id}/templates/analytics?start=1720000000&end=1725000000&templateIds=123456',
   },
+  // Conta / WABA (Cloud API)
+  {
+    group: 'Conta (Cloud)',
+    label: 'Atualizar perfil de negócio',
+    method: 'PUT',
+    path: '/instances/{id}/account/profile',
+    body: '{ "about": "Loja X", "description": "Melhores ofertas", "email": "contato@loja.com", "vertical": "RETAIL", "websites": ["https://loja.com"] }',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Números da WABA',
+    method: 'GET',
+    path: '/instances/{id}/account/phone-numbers',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Número (detalhe)',
+    method: 'GET',
+    path: '/instances/{id}/account/phone-number',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Solicitar código',
+    method: 'POST',
+    path: '/instances/{id}/account/request-code',
+    body: '{ "codeMethod": "SMS", "language": "pt_BR" }',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Verificar código',
+    method: 'POST',
+    path: '/instances/{id}/account/verify-code',
+    body: '{ "code": "123456" }',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Registrar (2FA)',
+    method: 'POST',
+    path: '/instances/{id}/account/register',
+    body: '{ "pin": "123456", "dataLocalizationRegion": "BR" }',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Info da WABA',
+    method: 'GET',
+    path: '/instances/{id}/account/waba',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Subscrever webhooks',
+    method: 'POST',
+    path: '/instances/{id}/account/subscribed-apps',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Apps subscritos',
+    method: 'GET',
+    path: '/instances/{id}/account/subscribed-apps',
+  },
+  {
+    group: 'Conta (Cloud)',
+    label: 'Analytics de mensagens',
+    method: 'GET',
+    path: '/instances/{id}/account/analytics?start=1720000000&end=1725000000&granularity=DAY',
+  },
   // Grupos
   { group: 'Grupos', label: 'Listar', method: 'GET', path: '/instances/{id}/groups' },
   {

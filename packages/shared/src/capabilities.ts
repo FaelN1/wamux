@@ -54,6 +54,10 @@ export interface ProviderCapabilities {
   status?: boolean;
   /** templates HSM (Cloud API oficial). */
   templates?: boolean;
+  /** atualizar o perfil de negócio (Cloud) — complementa `profile` (leitura). */
+  updateProfile?: boolean;
+  /** gestão de conta/WABA (Cloud API): números, registro, 2FA, analytics, subscrição. */
+  cloudAccount?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

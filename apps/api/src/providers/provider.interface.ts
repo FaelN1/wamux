@@ -44,6 +44,12 @@ import {
   TemplateFilter,
   SendTemplateInput,
   TemplateAnalyticsQuery,
+  UpdateProfileInput,
+  PhoneNumberInfo,
+  RequestCodeInput,
+  RegisterNumberInput,
+  MessagingAnalyticsQuery,
+  ConversationAnalyticsQuery,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -288,6 +294,23 @@ export interface WhatsAppProvider {
   // ── perfil (gated por capabilities.profile) ────────
   /** Nome/foto da própria conta conectada nesta instância. */
   getProfile?(): Promise<ProfileInfo>;
+  /** Atualiza o perfil de negócio (Cloud API — gated por capabilities.updateProfile). */
+  updateProfile?(input: UpdateProfileInput): Promise<void>;
+
+  // ── conta/WABA (Cloud-only, gated por capabilities.cloudAccount) ──
+  listPhoneNumbers?(): Promise<PhoneNumberInfo[]>;
+  getPhoneNumber?(): Promise<PhoneNumberInfo>;
+  requestVerificationCode?(input: RequestCodeInput): Promise<void>;
+  verifyCode?(code: string): Promise<void>;
+  registerNumber?(input: RegisterNumberInput): Promise<void>;
+  deregisterNumber?(): Promise<void>;
+  setTwoStepPin?(pin: string): Promise<void>;
+  getWabaInfo?(): Promise<unknown>;
+  subscribeApp?(): Promise<unknown>;
+  listSubscribedApps?(): Promise<unknown>;
+  unsubscribeApp?(): Promise<void>;
+  messagingAnalytics?(query: MessagingAnalyticsQuery): Promise<unknown>;
+  conversationAnalytics?(query: ConversationAnalyticsQuery): Promise<unknown>;
 
   // ── avatar de contato arbitrário (gated por capabilities.contactAvatar) ──
   /** Foto de perfil de QUALQUER jid (contato/grupo) — usado pelo refetch lazy do Inbox. `undefined` sem foto/privacidade restringindo, nunca erro. */
