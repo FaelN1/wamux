@@ -55,6 +55,7 @@ import {
   CreateFlowResult,
   SendFlowInput,
   FlowMetricsQuery,
+  ConnectCallInput,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -378,6 +379,13 @@ export interface WhatsAppProvider {
   getCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
   resetCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
   removeCloudGroupParticipant?(groupId: string, waId: string): Promise<void>;
+
+  // ── calling (gated por capabilities.calling — Cloud-only, só sinalização) ──
+  configureCalling?(settings: unknown): Promise<void>;
+  getCallingSettings?(): Promise<unknown>;
+  requestCallPermission?(to: string, text?: string): Promise<SendResult>;
+  getCallPermission?(waId: string): Promise<unknown>;
+  connectCall?(input: ConnectCallInput): Promise<{ id?: string }>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

@@ -8,6 +8,7 @@ export * from './capabilities';
 export * from './templates';
 export * from './account';
 export * from './flows';
+export * from './calling';
 export * from './filters';
 export * from './anti-ban';
 export * from './instance';

@@ -3,6 +3,7 @@ import FormData from 'form-data';
 import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
+  ConnectCallInput,
   ConnectionStatus,
   ConversationAnalyticsQuery,
   CreateFlowInput,
@@ -73,6 +74,7 @@ export class CloudApiProvider extends BaseProvider {
     cloudAccount: true,
     flows: true,
     cloudGroups: true,
+    calling: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -744,6 +746,66 @@ export class CloudApiProvider extends BaseProvider {
     };
   }
 
+  // ── calling (só sinalização; mídia WebRTC é externa ao gateway) ──
+
+  async configureCalling(settings: unknown): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/settings`, { calling: settings });
+  }
+
+  async getCallingSettings(): Promise<unknown> {
+    const res = await this.http.get(`/${this.phoneNumberId}/settings`);
+    return res.data;
+  }
+
+  /** Pede permissão de chamada (interactive call_permission_request, janela 24h). */
+  async requestCallPermission(to: string, text?: string): Promise<SendResult> {
+    const num = this.toNumber(to);
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: num,
+      type: 'interactive',
+      interactive: {
+        type: 'call_permission_request',
+        action: { name: 'call_permission_request' },
+        ...(text ? { body: { text } } : {}),
+      },
+    });
+    return this.result(res.data, num);
+  }
+
+  async getCallPermission(waId: string): Promise<unknown> {
+    const res = await this.http.get(`/${this.phoneNumberId}/call_permissions`, {
+      params: { user_wa_id: this.toNumber(waId) },
+    });
+    return res.data;
+  }
+
+  /** connect/pre_accept/accept/reject/terminate — o SDP trafega no payload. */
+  async connectCall(input: ConnectCallInput): Promise<{ id?: string }> {
+    const body: Record<string, unknown> = {
+      messaging_product: 'whatsapp',
+      action: input.action,
+    };
+    if (input.to) body.to = this.toNumber(input.to);
+    if (input.callId) body.call_id = input.callId;
+    if (input.sdp) body.session = { sdp_type: input.sdp.type, sdp: input.sdp.sdp };
+    if (input.callbackData) body.biz_opaque_callback_data = input.callbackData;
+    const res = await this.http.post(`/${this.phoneNumberId}/calls`, body);
+    const id = (res.data as { calls?: { id?: string }[] })?.calls?.[0]?.id;
+    return { id };
+  }
+
+  private handleCallsChange(value?: { calls?: Record<string, unknown>[] }): void {
+    for (const call of value?.calls ?? []) {
+      const event = call.event as string | undefined;
+      this.emitWebhook(
+        event === 'terminate' ? WebhookEvent.CALL_TERMINATE : WebhookEvent.CALL_CONNECT,
+        call,
+      );
+    }
+  }
+
   /**
    * Baixa a mídia de uma mensagem inbound. Dois passos: GET /{media-id} devolve
    * uma URL assinada (expira em ~5 min) + metadados; o download real exige o
@@ -806,6 +868,12 @@ export class CloudApiProvider extends BaseProvider {
           case 'group_status_update':
             this.emitWebhook(WebhookEvent.GROUPS_UPDATE, change.value);
             break;
+          case 'calls':
+            this.handleCallsChange(change.value as { calls?: Record<string, unknown>[] });
+            break;
+          case 'account_settings_update':
+            this.emitWebhook(WebhookEvent.CALL_SETTINGS_UPDATE, change.value);
+            break;
           default:
             this.logger.debug(`[cloud] webhook field não tratado: ${change.field}`);
         }
@@ -819,6 +887,11 @@ export class CloudApiProvider extends BaseProvider {
   private handleMessagesChange(value?: CloudChangeValue): void {
     const contactName = value?.contacts?.[0]?.profile?.name;
     for (const msg of value?.messages ?? []) {
+      // resposta de permissão de chamada chega como interactive sob messages.
+      if (msg.type === 'interactive' && msg.interactive?.type === 'call_permission_reply') {
+        this.emitWebhook(WebhookEvent.CALL_PERMISSION_REPLY, msg);
+        continue;
+      }
       this.emitTyped('message', this.normalize(msg, contactName));
     }
     for (const st of value?.statuses ?? []) {

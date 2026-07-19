@@ -184,6 +184,34 @@ export const WEBHOOK_EVENTS: WebhookEventMeta[] = [
     category: 'Presença & Chamadas',
     evolution: 'CALL',
   },
+  {
+    value: WebhookEvent.CALL_CONNECT,
+    label: 'Chamada: connect',
+    description: 'Cloud Calling: connect (offer/answer) de uma chamada.',
+    category: 'Presença & Chamadas',
+    evolution: 'CALL',
+  },
+  {
+    value: WebhookEvent.CALL_TERMINATE,
+    label: 'Chamada: terminate',
+    description: 'Cloud Calling: encerramento de uma chamada (status/duração).',
+    category: 'Presença & Chamadas',
+    evolution: 'CALL',
+  },
+  {
+    value: WebhookEvent.CALL_PERMISSION_REPLY,
+    label: 'Chamada: permissão',
+    description: 'Cloud Calling: resposta de permissão de chamada (accept/reject).',
+    category: 'Presença & Chamadas',
+    evolution: 'CALL',
+  },
+  {
+    value: WebhookEvent.CALL_SETTINGS_UPDATE,
+    label: 'Chamada: settings',
+    description: 'Cloud Calling: mudança de settings/status/callback do número.',
+    category: 'Presença & Chamadas',
+    evolution: 'CALL',
+  },
   // ── Etiquetas ──
   {
     value: WebhookEvent.LABELS_EDIT,

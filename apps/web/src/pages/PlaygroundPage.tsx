@@ -600,6 +600,40 @@ const PRESETS: Preset[] = [
     method: 'POST',
     path: '/instances/{id}/history/import/{jobId}/cancel',
   },
+  // Calling (Cloud API — só sinalização)
+  {
+    group: 'Calling (Cloud)',
+    label: 'Configurar',
+    method: 'POST',
+    path: '/instances/{id}/calling/settings',
+    body: '{ "status": "ENABLED", "call_icon_visibility": "DEFAULT", "callback_permission_status": "ENABLED" }',
+  },
+  {
+    group: 'Calling (Cloud)',
+    label: 'Ler settings',
+    method: 'GET',
+    path: '/instances/{id}/calling/settings',
+  },
+  {
+    group: 'Calling (Cloud)',
+    label: 'Pedir permissão',
+    method: 'POST',
+    path: '/instances/{id}/calling/permission-request',
+    body: '{ "to": "5511999999999", "text": "Podemos te ligar?" }',
+  },
+  {
+    group: 'Calling (Cloud)',
+    label: 'Status da permissão',
+    method: 'GET',
+    path: '/instances/{id}/calling/permission?waId=5511999999999',
+  },
+  {
+    group: 'Calling (Cloud)',
+    label: 'Ação (connect/accept/reject/terminate)',
+    method: 'POST',
+    path: '/instances/{id}/calling/action',
+    body: '{ "callId": "wacid.XXXX", "action": "terminate" }',
+  },
 ];
 
 const STATUS_COLOR = (s: number) =>

@@ -93,6 +93,11 @@ export enum WebhookEvent {
   // presença & chamadas
   PRESENCE_UPDATE = 'presence.update',
   CALL_RECEIVED = 'call.received',
+  // chamadas (Cloud API Calling — sinalização)
+  CALL_CONNECT = 'call.connect',
+  CALL_TERMINATE = 'call.terminate',
+  CALL_PERMISSION_REPLY = 'call.permission_reply',
+  CALL_SETTINGS_UPDATE = 'call.settings_update',
   // etiquetas
   LABELS_EDIT = 'labels.edit',
   LABELS_ASSOCIATION = 'labels.association',
