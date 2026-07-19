@@ -375,6 +375,25 @@ export interface SendContactInput {
   quotedMessageId?: string;
 }
 
+/** Postagem de Status/Stories (broadcast). */
+export interface SendStatusInput {
+  type: 'text' | 'image' | 'video' | 'audio';
+  /** texto (type=text). */
+  text?: string;
+  /** legenda (mídia). */
+  caption?: string;
+  /** fonte da mídia (uma de url/base64). */
+  url?: string;
+  base64?: string;
+  mimetype?: string;
+  /** cor de fundo do status de texto (hex "#RRGGBB" ou inteiro ARGB). */
+  backgroundColor?: string;
+  /** fonte do status de texto (0–5). */
+  font?: number;
+  /** destinatários específicos (jids); vazio = audiência padrão de status. */
+  statusJidList?: string[];
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

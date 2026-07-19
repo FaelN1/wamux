@@ -152,9 +152,14 @@ type PollRequest struct {
 }
 
 type StatusRequest struct {
-	Text            string `json:"text"`
-	BackgroundColor string `json:"background_color"`
-	Font            int    `json:"font"`
+	Type            string   `json:"type"` // text (default), image, video, audio
+	Text            string   `json:"text"`
+	Caption         string   `json:"caption"`
+	URL             string   `json:"url"`
+	MimeType        string   `json:"mime_type"`
+	BackgroundColor string   `json:"background_color"`
+	Font            int      `json:"font"`
+	StatusJidList   []string `json:"status_jid_list"`
 }
 
 type LocationRequest struct {
@@ -484,12 +489,76 @@ func (c *Client) SendStatus(req StatusRequest) (string, error) {
 	defer cancel()
 	statusJID := types.StatusBroadcastJID
 
-	msg := &waE2E.Message{
-		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text:           proto.String(req.Text),
-			BackgroundArgb: proto.Uint32(parseColor(req.BackgroundColor)),
-			Font:           waE2E.ExtendedTextMessage_FontType(req.Font).Enum(),
-		},
+	typ := req.Type
+	if typ == "" {
+		typ = "text"
+	}
+
+	var msg *waE2E.Message
+	if typ == "text" {
+		msg = &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text:           proto.String(req.Text),
+				BackgroundArgb: proto.Uint32(parseColor(req.BackgroundColor)),
+				Font:           waE2E.ExtendedTextMessage_FontType(req.Font).Enum(),
+			},
+		}
+	} else {
+		if req.URL == "" {
+			return "", fmt.Errorf("url is required for media status")
+		}
+		mediaData, err := downloadMedia(req.URL)
+		if err != nil {
+			return "", fmt.Errorf("failed to download media: %w", err)
+		}
+		switch typ {
+		case "image":
+			uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaImage)
+			if err != nil {
+				return "", fmt.Errorf("failed to upload image: %w", err)
+			}
+			msg = &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				Caption:       proto.String(req.Caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			}}
+		case "video":
+			uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaVideo)
+			if err != nil {
+				return "", fmt.Errorf("failed to upload video: %w", err)
+			}
+			msg = &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				Caption:       proto.String(req.Caption),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			}}
+		case "audio":
+			uploaded, err := c.WAClient.Upload(ctx, mediaData, whatsmeow.MediaAudio)
+			if err != nil {
+				return "", fmt.Errorf("failed to upload audio: %w", err)
+			}
+			msg = &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+				URL:           proto.String(uploaded.URL),
+				DirectPath:    proto.String(uploaded.DirectPath),
+				MediaKey:      uploaded.MediaKey,
+				Mimetype:      proto.String(req.MimeType),
+				FileEncSHA256: uploaded.FileEncSHA256,
+				FileSHA256:    uploaded.FileSHA256,
+				FileLength:    proto.Uint64(uint64(len(mediaData))),
+			}}
+		default:
+			return "", fmt.Errorf("unsupported status type: %s", typ)
+		}
 	}
 
 	resp, err := c.WAClient.SendMessage(ctx, statusJID, msg)

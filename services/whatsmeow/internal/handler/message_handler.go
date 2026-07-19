@@ -169,8 +169,12 @@ func (h *MessageHandler) SendStatus(c *fiber.Ctx) error {
 		return invalidRequestResponse(c, "Invalid request body.")
 	}
 
-	if req.Text == "" {
-		return invalidRequestResponse(c, "text is required.")
+	if req.Type == "" || req.Type == "text" {
+		if req.Text == "" {
+			return invalidRequestResponse(c, "text is required for a text status.")
+		}
+	} else if req.URL == "" {
+		return invalidRequestResponse(c, "url is required for a media status.")
 	}
 
 	client, err := h.manager.GetClient(inst.ID)

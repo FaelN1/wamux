@@ -35,6 +35,7 @@ import {
   SendPollInput,
   SendLocationInput,
   SendContactInput,
+  SendStatusInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -70,6 +71,7 @@ export class WebjsProvider extends BaseProvider {
     deleteMessage: true,
     location: true,
     contact: true,
+    status: true,
     groups: true,
     buttons: false,
     list: false,
@@ -207,6 +209,21 @@ export class WebjsProvider extends BaseProvider {
     const payload = cards.length === 1 ? cards[0] : cards;
     const sent = await client.sendMessage(chatId, payload as unknown as MessageMedia);
     return { id: sent.id._serialized, to: chatId, timestamp: sent.timestamp, status: 'sent' };
+  }
+
+  async sendStatus(input: SendStatusInput): Promise<SendResult> {
+    const STATUS = 'status@broadcast';
+    const client = this.requireClient();
+    let sent;
+    if (input.type === 'text') {
+      sent = await client.sendMessage(STATUS, input.text ?? '');
+    } else {
+      const media = input.url
+        ? await MessageMedia.fromUrl(input.url, { unsafeMime: true })
+        : new MessageMedia(input.mimetype ?? 'application/octet-stream', input.base64 ?? '');
+      sent = await client.sendMessage(STATUS, media, { caption: input.caption });
+    }
+    return { id: sent.id._serialized, to: STATUS, timestamp: sent.timestamp, status: 'sent' };
   }
 
   async logout(): Promise<void> {

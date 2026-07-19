@@ -50,6 +50,8 @@ export interface ProviderCapabilities {
   location?: boolean;
   /** enviar cartão(ões) de contato (vCard). */
   contact?: boolean;
+  /** postar Status/Stories (broadcast). */
+  status?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

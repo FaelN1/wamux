@@ -31,6 +31,7 @@ import {
   SendPollInput,
   SendLocationInput,
   SendContactInput,
+  SendStatusInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -96,6 +97,7 @@ export class WhatsmeowProvider extends BaseProvider {
     deleteMessage: true,
     location: true,
     contact: true,
+    status: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -409,6 +411,21 @@ export class WhatsmeowProvider extends BaseProvider {
       reply_to: input.quotedMessageId,
     });
     return this.result(res.data, jid);
+  }
+
+  /** `POST /message/status` do sidecar; o statusJidList não é aplicado no whatsmeow (audiência padrão). */
+  async sendStatus(input: SendStatusInput): Promise<SendResult> {
+    const res = await this.client().post('/message/status', {
+      type: input.type,
+      text: input.text,
+      caption: input.caption,
+      url: input.url,
+      mime_type: input.mimetype,
+      background_color: input.backgroundColor,
+      font: input.font,
+      status_jid_list: input.statusJidList,
+    });
+    return this.result(res.data, 'status@broadcast');
   }
 
   /** O sidecar Go só faz revoke (para todos); `forEveryone:false` cai no mesmo caminho. */

@@ -43,6 +43,7 @@ import {
   SendPixInput,
   SendLocationInput,
   SendContactInput,
+  SendStatusInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -98,6 +99,7 @@ export class BaileysProvider extends BaseProvider {
     deleteMessage: true,
     location: true,
     contact: true,
+    status: true,
     poll: true,
     pollResults: true,
     buttons: true,
@@ -462,6 +464,42 @@ export class BaileysProvider extends BaseProvider {
       },
     });
     return this.result(sent, jid);
+  }
+
+  async sendStatus(input: SendStatusInput): Promise<SendResult> {
+    const STATUS_JID = 'status@broadcast';
+    const source = input.url ? { url: input.url } : Buffer.from(input.base64 ?? '', 'base64');
+    let content: AnyMessageContent;
+    switch (input.type) {
+      case 'text':
+        content = { text: input.text ?? '' } as AnyMessageContent;
+        break;
+      case 'image':
+        content = { image: source, caption: input.caption, mimetype: input.mimetype };
+        break;
+      case 'video':
+        content = { video: source, caption: input.caption, mimetype: input.mimetype };
+        break;
+      case 'audio':
+        content = {
+          audio: source,
+          mimetype: input.mimetype ?? 'audio/ogg; codecs=opus',
+          ptt: true,
+        } as unknown as AnyMessageContent;
+        break;
+      default:
+        throw new Error(`Tipo de status não suportado: ${input.type as string}`);
+    }
+    const options: Record<string, unknown> = {};
+    if (input.statusJidList?.length) {
+      options.statusJidList = input.statusJidList.map((j) => this.toJid(j));
+    }
+    if (input.type === 'text') {
+      if (input.backgroundColor) options.backgroundColor = input.backgroundColor;
+      if (input.font != null) options.font = input.font;
+    }
+    const sent = await this.socket().sendMessage(STATUS_JID, content, options);
+    return this.result(sent, STATUS_JID);
   }
 
   async logout(): Promise<void> {

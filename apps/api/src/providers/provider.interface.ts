@@ -47,6 +47,7 @@ import {
   SendPixInput,
   SendPollInput,
   SendResult,
+  SendStatusInput,
   SendTextInput,
   SessionStore,
   SetPresenceInput,
@@ -308,6 +309,8 @@ export interface WhatsAppProvider {
   sendLocation?(input: SendLocationInput): Promise<SendResult>;
   /** Envia um ou mais cartões de contato (vCard). */
   sendContact?(input: SendContactInput): Promise<SendResult>;
+  /** Posta um Status/Story (broadcast). */
+  sendStatus?(input: SendStatusInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

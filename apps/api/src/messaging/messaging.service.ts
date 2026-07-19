@@ -26,6 +26,7 @@ import {
   SendPixInput,
   SendPollInput,
   SendResult,
+  SendStatusInput,
   SendTextInput,
 } from '../providers/provider.types';
 import { WhatsAppProvider } from '../providers/provider.interface';
@@ -34,6 +35,7 @@ import { EditMessageDto } from './dto/edit-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
 import { SendLocationDto } from './dto/send-location.dto';
 import { SendContactDto } from './dto/send-contact.dto';
+import { SendStatusDto } from './dto/send-status.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -242,6 +244,23 @@ export class MessagingService {
       participant: dto.participant,
     };
     return p.deleteMessage!(input);
+  }
+
+  /** Status/Stories é broadcast: chamada direta (fora da dispatch/inbox/rate-limit). */
+  async sendStatus(instanceId: string, dto: SendStatusDto): Promise<SendResult> {
+    const p = await this.cap(instanceId, 'status', (x) => x.sendStatus);
+    const input: SendStatusInput = {
+      type: dto.type,
+      text: dto.text,
+      caption: dto.caption,
+      url: dto.url,
+      base64: dto.base64,
+      mimetype: dto.mimetype,
+      backgroundColor: dto.backgroundColor,
+      font: dto.font,
+      statusJidList: dto.statusJidList,
+    };
+    return p.sendStatus!(input);
   }
 
   /** Provider vivo que suporta `flag` E expõe o método. Único ponto de 501. */
