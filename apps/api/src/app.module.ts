@@ -24,6 +24,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { TemplatesModule } from './templates/templates.module';
 import { AccountModule } from './account/account.module';
 import { FlowsModule } from './flows/flows.module';
+import { CloudGroupsModule } from './cloud-groups/cloud-groups.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
@@ -90,6 +91,7 @@ import { McpModule } from './mcp/mcp.module';
     TemplatesModule,
     AccountModule,
     FlowsModule,
+    CloudGroupsModule,
     HistoryModule,
     StatsModule,
     HealthModule,

@@ -370,6 +370,15 @@ export interface WhatsAppProvider {
   sendFlow?(input: SendFlowInput): Promise<SendResult>;
   flowMetrics?(id: string, query: FlowMetricsQuery): Promise<unknown>;
 
+  // ── grupos da Cloud API (gated por capabilities.cloudGroups — Cloud-only) ──
+  listCloudGroups?(): Promise<GroupInfo[]>;
+  getCloudGroup?(groupId: string): Promise<GroupInfo>;
+  createCloudGroup?(input: { subject: string; participants?: string[] }): Promise<GroupInfo>;
+  deleteCloudGroup?(groupId: string): Promise<void>;
+  getCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
+  resetCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
+  removeCloudGroupParticipant?(groupId: string, waId: string): Promise<void>;
+
   on<K extends keyof ProviderEventMap>(
     event: K,
     handler: (payload: ProviderEventMap[K]) => void,

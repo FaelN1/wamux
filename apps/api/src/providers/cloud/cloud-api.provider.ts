@@ -13,6 +13,7 @@ import {
   EditTemplatePatch,
   Flow,
   FlowMetricsQuery,
+  GroupInfo,
   MessageAckStatus,
   MessageTemplate,
   MessagingAnalyticsQuery,
@@ -71,6 +72,7 @@ export class CloudApiProvider extends BaseProvider {
     updateProfile: true,
     cloudAccount: true,
     flows: true,
+    cloudGroups: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -676,6 +678,72 @@ export class CloudApiProvider extends BaseProvider {
     return res.data;
   }
 
+  // ── grupos da Cloud API (Groups API — OBA-gated, máx 8 participantes) ──
+  // ⚠️ BODIES NÃO VALIDADOS contra conta real: as páginas get-started/reference
+  // só deram resumo de capacidade, não os JSON literais. Padrão observado:
+  // POST /{PHONE_NUMBER_ID}/groups. Confirmar create/participants/invite antes
+  // de produção — ver docs/cloud-api/05-groups.md.
+
+  async listCloudGroups(): Promise<GroupInfo[]> {
+    const res = await this.http.get(`/${this.phoneNumberId}/groups`);
+    return (((res.data as { data?: unknown[] })?.data ?? []) as Record<string, unknown>[]).map(
+      (g) => this.toCloudGroup(g),
+    );
+  }
+
+  async getCloudGroup(groupId: string): Promise<GroupInfo> {
+    const res = await this.http.get(`/${this.phoneNumberId}/groups/${groupId}`);
+    return this.toCloudGroup(res.data as Record<string, unknown>);
+  }
+
+  async createCloudGroup(input: { subject: string; participants?: string[] }): Promise<GroupInfo> {
+    const res = await this.http.post(`/${this.phoneNumberId}/groups`, {
+      messaging_product: 'whatsapp',
+      subject: input.subject,
+      ...(input.participants?.length
+        ? { participants: input.participants.map((p) => ({ user: this.toNumber(p) })) }
+        : {}),
+    });
+    return this.toCloudGroup(res.data as Record<string, unknown>);
+  }
+
+  async deleteCloudGroup(groupId: string): Promise<void> {
+    await this.http.delete(`/${this.phoneNumberId}/groups/${groupId}`);
+  }
+
+  async getCloudGroupInvite(groupId: string): Promise<{ code: string; url: string }> {
+    const res = await this.http.get(`/${this.phoneNumberId}/groups/${groupId}/invite`);
+    const code = (res.data as { invite_code?: string })?.invite_code ?? '';
+    return { code, url: code ? `https://chat.whatsapp.com/${code}` : '' };
+  }
+
+  async resetCloudGroupInvite(groupId: string): Promise<{ code: string; url: string }> {
+    const res = await this.http.post(`/${this.phoneNumberId}/groups/${groupId}/invite`, {
+      messaging_product: 'whatsapp',
+    });
+    const code = (res.data as { invite_code?: string })?.invite_code ?? '';
+    return { code, url: code ? `https://chat.whatsapp.com/${code}` : '' };
+  }
+
+  async removeCloudGroupParticipant(groupId: string, waId: string): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}/groups/${groupId}/participants`, {
+      messaging_product: 'whatsapp',
+      action: 'remove',
+      participants: [{ user: this.toNumber(waId) }],
+    });
+  }
+
+  private toCloudGroup(g: Record<string, unknown>): GroupInfo {
+    return {
+      jid: (g.id as string) ?? (g.group_id as string) ?? '',
+      subject: (g.subject as string) ?? (g.name as string) ?? '',
+      description: g.description as string | undefined,
+      participants: [],
+      size: (g.size as number) ?? 0,
+      inviteCode: g.invite_code as string | undefined,
+    };
+  }
+
   /**
    * Baixa a mídia de uma mensagem inbound. Dois passos: GET /{media-id} devolve
    * uma URL assinada (expira em ~5 min) + metadados; o download real exige o
@@ -729,6 +797,14 @@ export class CloudApiProvider extends BaseProvider {
             break;
           case 'template_category_update':
             this.emitWebhook(WebhookEvent.TEMPLATE_CATEGORY_UPDATE, change.value);
+            break;
+          case 'group_participants_update':
+            this.emitWebhook(WebhookEvent.GROUP_PARTICIPANTS_UPDATE, change.value);
+            break;
+          case 'group_lifecycle_update':
+          case 'group_settings_update':
+          case 'group_status_update':
+            this.emitWebhook(WebhookEvent.GROUPS_UPDATE, change.value);
             break;
           default:
             this.logger.debug(`[cloud] webhook field não tratado: ${change.field}`);

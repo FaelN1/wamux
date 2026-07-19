@@ -60,6 +60,8 @@ export interface ProviderCapabilities {
   cloudAccount?: boolean;
   /** WhatsApp Flows (Cloud API oficial). */
   flows?: boolean;
+  /** grupos da Cloud API (Groups API — OBA-gated, máx 8; NÃO é o mesmo que `groups`). */
+  cloudGroups?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

@@ -481,6 +481,40 @@ const PRESETS: Preset[] = [
     path: '/instances/{id}/flows/send',
     body: '{ "to": "5511999999999", "flowId": "{flowId}", "cta": "Abrir", "body": "Preencha o cadastro", "flowToken": "tok-123", "screen": "WELCOME" }',
   },
+  // Grupos Cloud (Groups API — OBA, máx 8)
+  { group: 'Grupos Cloud', label: 'Listar', method: 'GET', path: '/instances/{id}/cloud-groups' },
+  {
+    group: 'Grupos Cloud',
+    label: 'Criar',
+    method: 'POST',
+    path: '/instances/{id}/cloud-groups',
+    body: '{ "subject": "Meu grupo Cloud", "participants": ["5511988887777"] }',
+  },
+  {
+    group: 'Grupos Cloud',
+    label: 'Detalhe',
+    method: 'GET',
+    path: '/instances/{id}/cloud-groups/{groupId}',
+  },
+  {
+    group: 'Grupos Cloud',
+    label: 'Link de convite',
+    method: 'GET',
+    path: '/instances/{id}/cloud-groups/{groupId}/invite',
+  },
+  {
+    group: 'Grupos Cloud',
+    label: 'Remover participante',
+    method: 'POST',
+    path: '/instances/{id}/cloud-groups/{groupId}/participants/remove',
+    body: '{ "waId": "5511988887777" }',
+  },
+  {
+    group: 'Grupos Cloud',
+    label: 'Apagar/sair',
+    method: 'DELETE',
+    path: '/instances/{id}/cloud-groups/{groupId}',
+  },
   // Grupos
   { group: 'Grupos', label: 'Listar', method: 'GET', path: '/instances/{id}/groups' },
   {
