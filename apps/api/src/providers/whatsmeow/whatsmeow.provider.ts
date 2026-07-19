@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 import * as QRCode from 'qrcode';
 import { BaseProvider, ProviderContext } from '../provider.interface';
 import { mapWithConcurrency } from '../concurrency.util';
+import { buildVCard } from '../vcard.util';
 import {
   ConnectionStatus,
   CreateGroupInput,
@@ -29,6 +30,7 @@ import {
   SendMediaInput,
   SendPollInput,
   SendLocationInput,
+  SendContactInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -93,6 +95,7 @@ export class WhatsmeowProvider extends BaseProvider {
     editMessage: true,
     deleteMessage: true,
     location: true,
+    contact: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -393,6 +396,16 @@ export class WhatsmeowProvider extends BaseProvider {
       longitude: input.longitude,
       name: input.name,
       address: input.address,
+      reply_to: input.quotedMessageId,
+    });
+    return this.result(res.data, jid);
+  }
+
+  async sendContact(input: SendContactInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
+    const res = await this.client().post('/message/contact', {
+      to: jid,
+      contacts: input.contacts.map((c) => ({ display_name: c.fullName, vcard: buildVCard(c) })),
       reply_to: input.quotedMessageId,
     });
     return this.result(res.data, jid);

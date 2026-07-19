@@ -7,6 +7,7 @@ import { IdempotencyService } from '../throttle/idempotency.service';
 import { WhatsAppProvider } from '../providers/provider.interface';
 import {
   SendButtonsInput,
+  SendContactInput,
   SendListInput,
   SendLocationInput,
   SendMediaInput,
@@ -84,6 +85,8 @@ export class OutboundProcessor extends WorkerHost {
         return provider.sendPix(payload as SendPixInput);
       case 'location':
         return provider.sendLocation!(payload as SendLocationInput);
+      case 'contact':
+        return provider.sendContact!(payload as SendContactInput);
     }
   }
 }

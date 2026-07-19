@@ -7,6 +7,7 @@ import {
   NormalizedMessage,
   ProviderType,
   ReactMessageInput,
+  SendContactInput,
   SendLocationInput,
   SendMediaInput,
   SendResult,
@@ -29,6 +30,7 @@ export class CloudApiProvider extends BaseProvider {
   readonly capabilities = {
     reactions: true,
     location: true,
+    contact: true,
   };
   private http!: AxiosInstance;
 
@@ -154,6 +156,26 @@ export class CloudApiProvider extends BaseProvider {
         name: input.name,
         address: input.address,
       },
+    });
+    return this.result(res.data, to);
+  }
+
+  async sendContact(input: SendContactInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const contacts = input.contacts.map((c) => {
+      const digits = (c.phone ?? '').replace(/\D/g, '');
+      return {
+        name: { formatted_name: c.fullName, first_name: c.fullName },
+        ...(c.organization ? { org: { company: c.organization } } : {}),
+        ...(digits ? { phones: [{ phone: digits, type: 'CELL', wa_id: digits }] } : {}),
+      };
+    });
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'contacts',
+      contacts,
     });
     return this.result(res.data, to);
   }

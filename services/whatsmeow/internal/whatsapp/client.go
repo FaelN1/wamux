@@ -166,6 +166,17 @@ type LocationRequest struct {
 	ReplyTo   string  `json:"reply_to"`
 }
 
+type ContactCardRequest struct {
+	DisplayName string `json:"display_name"`
+	Vcard       string `json:"vcard"`
+}
+
+type ContactRequest struct {
+	To       string               `json:"to"`
+	Contacts []ContactCardRequest `json:"contacts"`
+	ReplyTo  string               `json:"reply_to"`
+}
+
 type CommunityRequest struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
@@ -516,6 +527,52 @@ func (c *Client) SendLocation(req LocationRequest) (string, error) {
 	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
 	if err != nil {
 		return "", fmt.Errorf("failed to send location: %w", err)
+	}
+	return resp.ID, nil
+}
+
+func (c *Client) SendContact(req ContactRequest) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(req.To)
+	if err != nil {
+		return "", err
+	}
+	if len(req.Contacts) == 0 {
+		return "", fmt.Errorf("no contacts provided")
+	}
+
+	var msg *waE2E.Message
+	if len(req.Contacts) == 1 {
+		msg = &waE2E.Message{
+			ContactMessage: &waE2E.ContactMessage{
+				DisplayName: proto.String(req.Contacts[0].DisplayName),
+				Vcard:       proto.String(req.Contacts[0].Vcard),
+			},
+		}
+	} else {
+		arr := make([]*waE2E.ContactMessage, 0, len(req.Contacts))
+		for _, cc := range req.Contacts {
+			arr = append(arr, &waE2E.ContactMessage{
+				DisplayName: proto.String(cc.DisplayName),
+				Vcard:       proto.String(cc.Vcard),
+			})
+		}
+		msg = &waE2E.Message{
+			ContactsArrayMessage: &waE2E.ContactsArrayMessage{
+				DisplayName: proto.String(fmt.Sprintf("%d contacts", len(arr))),
+				Contacts:    arr,
+			},
+		}
+	}
+
+	if req.ReplyTo != "" {
+		setContextInfo(msg, req.ReplyTo)
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send contact: %w", err)
 	}
 	return resp.ID, nil
 }
@@ -1519,6 +1576,10 @@ func setContextInfo(msg *waE2E.Message, replyTo string) {
 		msg.DocumentMessage.ContextInfo = ctxInfo
 	} else if msg.LocationMessage != nil {
 		msg.LocationMessage.ContextInfo = ctxInfo
+	} else if msg.ContactMessage != nil {
+		msg.ContactMessage.ContextInfo = ctxInfo
+	} else if msg.ContactsArrayMessage != nil {
+		msg.ContactsArrayMessage.ContextInfo = ctxInfo
 	}
 }
 

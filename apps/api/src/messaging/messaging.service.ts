@@ -19,6 +19,7 @@ import {
   EditMessageInput,
   DeleteMessageInput,
   SendButtonsInput,
+  SendContactInput,
   SendListInput,
   SendLocationInput,
   SendMediaInput,
@@ -32,6 +33,7 @@ import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
 import { SendLocationDto } from './dto/send-location.dto';
+import { SendContactDto } from './dto/send-contact.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -186,6 +188,16 @@ export class MessagingService {
       quotedMessageId: dto.quotedMessageId,
     };
     return this.dispatch(instanceId, 'location', payload, dto.clientMessageId);
+  }
+
+  async sendContact(instanceId: string, dto: SendContactDto): Promise<SendOutcome> {
+    await this.cap(instanceId, 'contact', (x) => x.sendContact);
+    const payload: SendContactInput = {
+      to: dto.to,
+      contacts: dto.contacts,
+      quotedMessageId: dto.quotedMessageId,
+    };
+    return this.dispatch(instanceId, 'contact', payload, dto.clientMessageId);
   }
 
   async pollResults(instanceId: string, messageId: string): Promise<PollResults> {
@@ -424,6 +436,8 @@ export class MessagingService {
         return provider.sendPix(payload as SendPixInput);
       case 'location':
         return provider.sendLocation!(payload as SendLocationInput);
+      case 'contact':
+        return provider.sendContact!(payload as SendContactInput);
     }
   }
 

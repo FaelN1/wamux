@@ -5,6 +5,7 @@ import type { AnyMessageContent, BinaryNode, WAMessage, WASocket } from 'baileys
 import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext, QrPayload } from '../provider.interface';
 import { classifyJid } from '../jid.util';
+import { buildVCard } from '../vcard.util';
 import { mapWithConcurrency } from '../concurrency.util';
 import {
   ConnectionStatus,
@@ -41,6 +42,7 @@ import {
   SendMediaInput,
   SendPixInput,
   SendLocationInput,
+  SendContactInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -95,6 +97,7 @@ export class BaileysProvider extends BaseProvider {
     editMessage: true,
     deleteMessage: true,
     location: true,
+    contact: true,
     poll: true,
     pollResults: true,
     buttons: true,
@@ -442,6 +445,20 @@ export class BaileysProvider extends BaseProvider {
         degreesLongitude: input.longitude,
         name: input.name,
         address: input.address,
+      },
+    });
+    return this.result(sent, jid);
+  }
+
+  async sendContact(input: SendContactInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
+    const sent = await this.socket().sendMessage(jid, {
+      contacts: {
+        displayName:
+          input.contacts.length === 1
+            ? input.contacts[0].fullName
+            : `${input.contacts.length} contatos`,
+        contacts: input.contacts.map((c) => ({ vcard: buildVCard(c) })),
       },
     });
     return this.result(sent, jid);

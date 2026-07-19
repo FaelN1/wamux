@@ -359,6 +359,22 @@ export interface SendLocationInput {
   quotedMessageId?: string;
 }
 
+/** Um cartão de contato. Se `vcard` vier cru, tem precedência sobre os campos. */
+export interface ContactCard {
+  fullName: string;
+  /** número em dígitos (E.164 sem '+') — usado para montar o vCard TEL. */
+  phone?: string;
+  organization?: string;
+  /** vCard cru; se presente, é usado como está. */
+  vcard?: string;
+}
+
+export interface SendContactInput {
+  to: string;
+  contacts: ContactCard[];
+  quotedMessageId?: string;
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

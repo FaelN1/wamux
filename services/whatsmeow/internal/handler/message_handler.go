@@ -319,6 +319,46 @@ func (h *MessageHandler) SendLocation(c *fiber.Ctx) error {
 	})
 }
 
+// POST /api/v1/message/contact
+func (h *MessageHandler) SendContact(c *fiber.Ctx) error {
+	inst := middleware.GetInstance(c)
+	if inst == nil {
+		return unauthorizedResponse(c)
+	}
+
+	if inst.Status != instance.StatusConnected {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":   "instance_not_connected",
+			"message": "Instance is not connected to WhatsApp.",
+			"status":  400,
+		})
+	}
+
+	var req whatsapp.ContactRequest
+	if err := c.BodyParser(&req); err != nil {
+		return invalidRequestResponse(c, "Invalid request body.")
+	}
+
+	if req.To == "" || len(req.Contacts) == 0 {
+		return invalidRequestResponse(c, "to and contacts are required.")
+	}
+
+	client, err := h.manager.GetClient(inst.ID)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+
+	msgID, err := client.SendContact(req)
+	if err != nil {
+		return internalErrorResponse(c, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message_id": msgID,
+		"status":     "sent",
+	})
+}
+
 // DELETE /api/v1/message
 func (h *MessageHandler) Delete(c *fiber.Ctx) error {
 	inst := middleware.GetInstance(c)

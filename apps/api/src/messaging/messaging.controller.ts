@@ -13,6 +13,7 @@ import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
 import { SendLocationDto } from './dto/send-location.dto';
+import { SendContactDto } from './dto/send-contact.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -76,6 +77,13 @@ export class MessagingController {
   @ApiOperation({ summary: 'Envia uma mensagem de localização (lat/long).' })
   sendLocation(@Param('id') id: string, @Body() dto: SendLocationDto) {
     return this.messaging.sendLocation(id, dto);
+  }
+
+  @Post(':id/contact')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({ summary: 'Envia um ou mais cartões de contato (vCard).' })
+  sendContact(@Param('id') id: string, @Body() dto: SendContactDto) {
+    return this.messaging.sendContact(id, dto);
   }
 
   @Post(':id/reaction')

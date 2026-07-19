@@ -48,6 +48,8 @@ export interface ProviderCapabilities {
   deleteMessage?: boolean;
   /** enviar mensagem de localização. */
   location?: boolean;
+  /** enviar cartão(ões) de contato (vCard). */
+  contact?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

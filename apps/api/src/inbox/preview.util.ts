@@ -1,6 +1,7 @@
 import { MessageType, NormalizedMessage } from '@wamux/shared';
 import {
   SendButtonsInput,
+  SendContactInput,
   SendListInput,
   SendLocationInput,
   SendMediaInput,
@@ -44,6 +45,7 @@ const KIND_TO_MESSAGE_TYPE: Record<OutboundKind, MessageType> = {
   list: MessageType.LIST,
   pix: MessageType.INTERACTIVE,
   location: MessageType.LOCATION,
+  contact: MessageType.CONTACT,
 };
 
 /** `MessageType` do envio de saída, a partir do `kind`/payload do outbound. */
@@ -75,6 +77,12 @@ export function previewFromOutbound(
     case 'location': {
       const loc = payload as SendLocationInput;
       return loc.name ? `📍 ${loc.name}` : MEDIA_LABEL[MessageType.LOCATION];
+    }
+    case 'contact': {
+      const c = payload as SendContactInput;
+      return c.contacts.length === 1
+        ? `👤 ${c.contacts[0].fullName}`
+        : MEDIA_LABEL[MessageType.CONTACT];
     }
     default:
       return undefined;

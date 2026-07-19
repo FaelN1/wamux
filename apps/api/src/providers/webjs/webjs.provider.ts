@@ -34,6 +34,7 @@ import {
   SendMediaInput,
   SendPollInput,
   SendLocationInput,
+  SendContactInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -68,6 +69,7 @@ export class WebjsProvider extends BaseProvider {
     editMessage: true,
     deleteMessage: true,
     location: true,
+    contact: true,
     groups: true,
     buttons: false,
     list: false,
@@ -188,6 +190,22 @@ export class WebjsProvider extends BaseProvider {
       address: input.address,
     } as unknown as ConstructorParameters<typeof Location>[2]);
     const sent = await this.requireClient().sendMessage(chatId, loc);
+    return { id: sent.id._serialized, to: chatId, timestamp: sent.timestamp, status: 'sent' };
+  }
+
+  async sendContact(input: SendContactInput): Promise<SendResult> {
+    const chatId = this.toChatId(input.to);
+    const client = this.requireClient();
+    // webjs envia um Contact (obtido por número); vCard cru não é suportado.
+    const cards = await Promise.all(
+      input.contacts.map((c) => {
+        const phone = (c.phone ?? '').replace(/\D/g, '');
+        if (!phone) throw new Error('webjs: envio de contato exige "phone" em cada cartão');
+        return client.getContactById(this.toChatId(phone));
+      }),
+    );
+    const payload = cards.length === 1 ? cards[0] : cards;
+    const sent = await client.sendMessage(chatId, payload as unknown as MessageMedia);
     return { id: sent.id._serialized, to: chatId, timestamp: sent.timestamp, status: 'sent' };
   }
 

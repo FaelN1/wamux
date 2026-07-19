@@ -40,6 +40,7 @@ import {
   ProviderType,
   ReactMessageInput,
   SendButtonsInput,
+  SendContactInput,
   SendListInput,
   SendLocationInput,
   SendMediaInput,
@@ -305,6 +306,8 @@ export interface WhatsAppProvider {
   // ── novos tipos de envio (gated por capabilities.*) ──
   /** Envia uma mensagem de localização (lat/long). */
   sendLocation?(input: SendLocationInput): Promise<SendResult>;
+  /** Envia um ou mais cartões de contato (vCard). */
+  sendContact?(input: SendContactInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,
