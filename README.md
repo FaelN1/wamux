@@ -69,6 +69,10 @@ telemetria obrigatória.**
 
 - Texto, **mídia rica** (imagem, vídeo, áudio, documento, sticker) por **URL ou base64** — com
   **GIF**, **voz (PTT)**, **vídeo-nota (PTV)** e **sticker animado**. Base64 grande vira stream (sem estourar memória).
+- **Localização** e **contato/vCard** como tipos de envio próprios, e **Status/Stories** (postar
+  texto/imagem/vídeo/áudio — pra todos os contatos ou uma lista específica).
+- **Ações sobre mensagens existentes**: **reagir** (emoji), **editar** e **apagar para todos**
+  (revoke) — em todas as engines onde o protocolo permite.
 - **Interativos**: enquetes (com **coleta e agregação de votos**), botões, listas e **botão PIX** —
   com _fallback_ automático para texto e resposta honesta (`422`) quando a engine não entrega.
 - **Download de mídia recebida** (streaming ou base64) por endpoint dedicado.
@@ -87,6 +91,24 @@ telemetria obrigatória.**
   de **texto, mídia e enquete**.
 - **Perfil**: nome e foto da própria conta conectada, e foto de perfil de **qualquer contato,
   grupo ou comunidade**.
+
+### Cloud API oficial (Meta) — integração completa
+
+O engine `cloud` foi de "só texto/mídia" a **paridade ampla com a WhatsApp Cloud API**:
+
+- **Templates HSM**: CRUD, **envio com parâmetros** (posicional/nomeado), analytics e webhooks
+  de status/qualidade/categoria.
+- **Flows** (formulários no chat): CRUD com `validation_errors`, publicar/depreciar, envio e métricas.
+- **Perfil de negócio & conta/WABA**: editar perfil, listar números, registro/verificação/**2FA**,
+  info da WABA, subscrição de webhooks e **analytics** de mensagens e conversas.
+- **Grupos da Cloud API** (Groups API — OBA, máx 8) e **Calling** (só **sinalização**; a mídia
+  WebRTC é externa ao gateway).
+- **Interativos nativos** (botões/listas/CTA), **mark-read + typing**, **block/unblock**,
+  **download de mídia** e webhook de entrada **roteado por `change.field`** (mensagens, status,
+  respostas de interativo, templates, grupos e chamadas).
+
+> A integração Cloud segue os JSON oficiais da Meta; validação ao vivo pende de uma conta Cloud
+> conectada. Os _bodies_ da Groups API estão marcados como **a confirmar** contra conta real OBA.
 
 ### Inbox — conversas persistidas
 
@@ -162,10 +184,16 @@ capabilities mais pedidas:
 | Recurso                                        | `baileys` | `webjs`  | `cloud` | `whatsmeow` |
 | ---------------------------------------------- | :-------: | :------: | :-----: | :---------: |
 | Mensagens (texto/mídia/interativos)            |    ✅     |    ✅    |   ✅    |     ✅      |
-| Grupos                                         |    ✅     |    ✅    |   ❌    |     ✅      |
+| Reagir / editar / apagar mensagem              |    ✅     |    ✅    |  🟡 ¹   |     ✅      |
+| Localização & contato/vCard                    |    ✅     |    ✅    |   ✅    |     ✅      |
+| Status/Stories                                 |    ✅     |    ✅    |   ❌    |     ✅      |
+| Grupos                                         |    ✅     |    ✅    |  🟡 ²   |     ✅      |
 | Comunidades                                    |    ✅     | ❌ `501` |   ❌    |     ✅      |
 | Canais (Newsletter)                            |    ✅     |    ✅    |   ❌    |     ✅      |
-| Perfil (conta própria + foto de contato/grupo) |    ✅     |    ✅    |   ❌    |     ✅      |
+| Perfil (conta própria + foto de contato/grupo) |    ✅     |    ✅    |   ✅    |     ✅      |
+| Templates / Flows / Conta-WABA / Calling       | ❌ `501`  | ❌ `501` |   ✅    |  ❌ `501`   |
+
+<sub>¹ Cloud: reagir sim; editar/apagar não (a Meta não expõe). · ² Cloud: Groups API oficial (OBA, máx 8), distinta dos grupos das engines não oficiais.</sub>
 
 > ⚠️ **Aviso.** Baileys, whatsapp-web.js e whatsmeow são **não oficiais** e violam os Termos do
 > WhatsApp — há risco de banimento. Apenas a **Cloud API** é oficial. Use com responsabilidade e
@@ -250,11 +278,13 @@ schemas e exemplos) fica no **Swagger em `/api/docs`**. Um recorte:
 | Área                    | Exemplos                                                                                                                                                |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Instâncias**          | `POST /instances` · `GET /instances/:id` · `POST /:id/connect` · `GET /:id/qr` · `POST /:id/pair-code` · `POST /:id/provider` · `GET /:id/capabilities` |
-| **Mensagens**           | `POST /messages/:id/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `GET /:id/status/:messageId`                                           |
+| **Mensagens**           | `POST /messages/:id/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `/location` · `/contact` · `/status`                                   |
+| **Ações de mensagem**   | `POST /messages/:id/reaction` · `/edit` · `/delete` · `/location-request` · `GET /:id/status/:messageId`                                                |
 | **Grupos**              | `GET/POST /instances/:id/groups` · `/:jid/participants` · `/:jid/subject` · `/:jid/invite`                                                              |
 | **Comunidades**         | `GET/POST /instances/:id/communities` · `/:jid/admins` · `/:jid/groups` · `/:jid/announcement`                                                          |
 | **Canais (Newsletter)** | `GET/POST /instances/:id/newsletters` · `/:jid/follow` · `/:jid/message`                                                                                |
-| **Perfil**              | `GET /instances/:id/profile` (conta própria)                                                                                                            |
+| **Perfil**              | `GET /instances/:id/profile` (conta própria) · `PUT /:id/account/profile` (perfil de negócio, Cloud)                                                    |
+| **Cloud API (oficial)** | `…/templates` (CRUD+envio+analytics) · `…/flows` · `…/account/*` (números·2FA·WABA·analytics) · `…/cloud-groups` · `…/calling/*`                        |
 | **Eventos**             | `PUT /instances/:id/events` (webhook · websocket · rabbitmq, por evento) · `PUT /:id/webhook`                                                           |
 | **Segurança**           | `PUT /instances/:id/filters` (whitelist/blacklist JID) · webhook HMAC · `GET /:id/webhook/dlq`                                                          |
 | **API keys & MCP**      | `POST/GET/DELETE /instances/:id/api-keys` · `POST /:id/mcp` (protocolo MCP)                                                                             |
