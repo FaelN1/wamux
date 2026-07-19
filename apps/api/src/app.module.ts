@@ -23,6 +23,7 @@ import { GroupsModule } from './groups/groups.module';
 import { CommunitiesModule } from './communities/communities.module';
 import { TemplatesModule } from './templates/templates.module';
 import { AccountModule } from './account/account.module';
+import { FlowsModule } from './flows/flows.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
@@ -88,6 +89,7 @@ import { McpModule } from './mcp/mcp.module';
     CommunitiesModule,
     TemplatesModule,
     AccountModule,
+    FlowsModule,
     HistoryModule,
     StatsModule,
     HealthModule,

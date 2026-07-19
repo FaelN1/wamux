@@ -434,6 +434,53 @@ const PRESETS: Preset[] = [
     method: 'GET',
     path: '/instances/{id}/account/analytics?start=1720000000&end=1725000000&granularity=DAY',
   },
+  // Flows (Cloud API)
+  { group: 'Flows (Cloud)', label: 'Listar', method: 'GET', path: '/instances/{id}/flows' },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Criar',
+    method: 'POST',
+    path: '/instances/{id}/flows',
+    body: '{ "name": "cadastro", "categories": ["SIGN_UP"] }',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Detalhe',
+    method: 'GET',
+    path: '/instances/{id}/flows/{flowId}',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Atualizar flow.json',
+    method: 'POST',
+    path: '/instances/{id}/flows/{flowId}/assets',
+    body: '{ "flowJson": "{\\"version\\":\\"5.0\\",\\"screens\\":[]}" }',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Publicar',
+    method: 'POST',
+    path: '/instances/{id}/flows/{flowId}/publish',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Depreciar',
+    method: 'POST',
+    path: '/instances/{id}/flows/{flowId}/deprecate',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Apagar (DRAFT)',
+    method: 'DELETE',
+    path: '/instances/{id}/flows/{flowId}',
+  },
+  {
+    group: 'Flows (Cloud)',
+    label: 'Enviar',
+    method: 'POST',
+    path: '/instances/{id}/flows/send',
+    body: '{ "to": "5511999999999", "flowId": "{flowId}", "cta": "Abrir", "body": "Preencha o cadastro", "flowToken": "tok-123", "screen": "WELCOME" }',
+  },
   // Grupos
   { group: 'Grupos', label: 'Listar', method: 'GET', path: '/instances/{id}/groups' },
   {

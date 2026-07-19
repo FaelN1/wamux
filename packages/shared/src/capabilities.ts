@@ -58,6 +58,8 @@ export interface ProviderCapabilities {
   updateProfile?: boolean;
   /** gestão de conta/WABA (Cloud API): números, registro, 2FA, analytics, subscrição. */
   cloudAccount?: boolean;
+  /** WhatsApp Flows (Cloud API oficial). */
+  flows?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

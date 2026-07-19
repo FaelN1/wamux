@@ -50,6 +50,11 @@ import {
   RegisterNumberInput,
   MessagingAnalyticsQuery,
   ConversationAnalyticsQuery,
+  Flow,
+  CreateFlowInput,
+  CreateFlowResult,
+  SendFlowInput,
+  FlowMetricsQuery,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -353,6 +358,17 @@ export interface WhatsAppProvider {
   deleteTemplate?(input: DeleteTemplateInput): Promise<void>;
   sendTemplate?(input: SendTemplateInput): Promise<SendResult>;
   templateAnalytics?(query: TemplateAnalyticsQuery): Promise<unknown>;
+
+  // ── flows (gated por capabilities.flows — Cloud-only) ──
+  listFlows?(): Promise<Flow[]>;
+  getFlow?(id: string): Promise<Flow>;
+  createFlow?(input: CreateFlowInput): Promise<CreateFlowResult>;
+  updateFlowJson?(id: string, flowJson: string): Promise<{ validation_errors: unknown[] }>;
+  publishFlow?(id: string): Promise<void>;
+  deprecateFlow?(id: string): Promise<void>;
+  deleteFlow?(id: string): Promise<void>;
+  sendFlow?(input: SendFlowInput): Promise<SendResult>;
+  flowMetrics?(id: string, query: FlowMetricsQuery): Promise<unknown>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,

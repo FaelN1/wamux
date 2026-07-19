@@ -5,10 +5,14 @@ import { BaseProvider, ProviderContext } from '../provider.interface';
 import {
   ConnectionStatus,
   ConversationAnalyticsQuery,
+  CreateFlowInput,
+  CreateFlowResult,
   CreateTemplateInput,
   CreateTemplateResult,
   DeleteTemplateInput,
   EditTemplatePatch,
+  Flow,
+  FlowMetricsQuery,
   MessageAckStatus,
   MessageTemplate,
   MessagingAnalyticsQuery,
@@ -23,6 +27,7 @@ import {
   ReactMessageInput,
   SendButtonsInput,
   SendContactInput,
+  SendFlowInput,
   SendListInput,
   SendLocationInput,
   SendMediaInput,
@@ -65,6 +70,7 @@ export class CloudApiProvider extends BaseProvider {
     profile: true,
     updateProfile: true,
     cloudAccount: true,
+    flows: true,
   };
 
   /** client de MESSAGING (token de messaging, opera sobre phoneNumberId). */
@@ -569,6 +575,104 @@ export class CloudApiProvider extends BaseProvider {
         : '') +
       (query.dimensions?.length ? `.dimensions(${JSON.stringify(query.dimensions)})` : '');
     const res = await this.mgmt.get(`/${this.wabaId}`, { params: { fields: field } });
+    return res.data;
+  }
+
+  // ── WhatsApp Flows (management token; send = messaging token) ──
+
+  private readonly FLOW_FIELDS = 'id,name,status,categories,validation_errors,preview,endpoint_uri';
+
+  async listFlows(): Promise<Flow[]> {
+    const res = await this.mgmt.get(`/${this.wabaId}/flows`);
+    return ((res.data as { data?: Flow[] })?.data ?? []) as Flow[];
+  }
+
+  async getFlow(id: string): Promise<Flow> {
+    const res = await this.mgmt.get(`/${id}`, { params: { fields: this.FLOW_FIELDS } });
+    return res.data as Flow;
+  }
+
+  async createFlow(input: CreateFlowInput): Promise<CreateFlowResult> {
+    const res = await this.mgmt.post(`/${this.wabaId}/flows`, {
+      name: input.name,
+      categories: input.categories,
+      ...(input.flow_json ? { flow_json: input.flow_json } : {}),
+      ...(input.clone_flow_id ? { clone_flow_id: input.clone_flow_id } : {}),
+      ...(input.endpoint_uri ? { endpoint_uri: input.endpoint_uri } : {}),
+      ...(input.publish != null ? { publish: input.publish } : {}),
+    });
+    const d = res.data as { id?: string; validation_errors?: unknown[] };
+    return { id: d?.id ?? '', validation_errors: d?.validation_errors ?? [] };
+  }
+
+  /** Atualiza o flow.json via asset (multipart). Retorna validation_errors. */
+  async updateFlowJson(id: string, flowJson: string): Promise<{ validation_errors: unknown[] }> {
+    const form = new FormData();
+    form.append('name', 'flow.json');
+    form.append('asset_type', 'FLOW_JSON');
+    form.append('file', Buffer.from(flowJson, 'utf8'), {
+      filename: 'flow.json',
+      contentType: 'application/json',
+    });
+    const res = await this.mgmt.post(`/${id}/assets`, form, { headers: form.getHeaders() });
+    return {
+      validation_errors: (res.data as { validation_errors?: unknown[] })?.validation_errors ?? [],
+    };
+  }
+
+  async publishFlow(id: string): Promise<void> {
+    await this.mgmt.post(`/${id}/publish`, {});
+  }
+
+  async deprecateFlow(id: string): Promise<void> {
+    await this.mgmt.post(`/${id}/deprecate`, {});
+  }
+
+  async deleteFlow(id: string): Promise<void> {
+    await this.mgmt.delete(`/${id}`);
+  }
+
+  async sendFlow(input: SendFlowInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const action = input.action ?? 'navigate';
+    const parameters: Record<string, unknown> = {
+      flow_message_version: '3',
+      flow_token: input.flowToken,
+      flow_cta: input.cta,
+      flow_action: action,
+      ...(input.flowId ? { flow_id: input.flowId } : {}),
+      ...(input.flowName ? { flow_name: input.flowName } : {}),
+      ...(input.mode ? { mode: input.mode } : {}),
+    };
+    if (action === 'navigate') {
+      parameters.flow_action_payload = {
+        screen: input.screen,
+        ...(input.data && Object.keys(input.data).length ? { data: input.data } : {}),
+      };
+    }
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'flow',
+        ...(input.header ? { header: { type: 'text', text: input.header } } : {}),
+        body: { text: input.body },
+        ...(input.footer ? { footer: { text: input.footer } } : {}),
+        action: { name: 'flow', parameters },
+      },
+      ...this.context(input.quotedMessageId),
+    });
+    return this.result(res.data, to);
+  }
+
+  async flowMetrics(id: string, query: FlowMetricsQuery): Promise<unknown> {
+    const field =
+      `metric.name(${query.metric}).granularity(${query.granularity})` +
+      (query.since ? `.since(${query.since})` : '') +
+      (query.until ? `.until(${query.until})` : '');
+    const res = await this.mgmt.get(`/${id}`, { params: { fields: field } });
     return res.data;
   }
 
