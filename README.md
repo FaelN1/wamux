@@ -59,6 +59,9 @@ telemetria obrigatória.**
   retry + DLQ, circuit breaker por webhook, reconexão com backoff e camada **anti-ban**.
 - 🏢 **Oficial e não-oficial, lado a lado.** Cloud API da Meta e engines não oficiais na
   mesma superfície, com a mesma autenticação e os mesmos webhooks.
+- 🤖 **Pronto pra agentes de IA.** Servidor **MCP** embutido — Claude e outros agentes
+  operam uma instância via protocolo MCP, autenticados com uma **API key de escopo
+  restrito** (o agente só faz o que a key permite, nada além disso).
 
 ## ✨ O que o WAMux faz
 
@@ -67,8 +70,45 @@ telemetria obrigatória.**
 - Texto, **mídia rica** (imagem, vídeo, áudio, documento, sticker) por **URL ou base64** — com
   **GIF**, **voz (PTT)**, **vídeo-nota (PTV)** e **sticker animado**. Base64 grande vira stream (sem estourar memória).
 - **Interativos**: enquetes (com **coleta e agregação de votos**), botões, listas e **botão PIX** —
-  com *fallback* automático para texto e resposta honesta (`422`) quando a engine não entrega.
+  com _fallback_ automático para texto e resposta honesta (`422`) quando a engine não entrega.
 - **Download de mídia recebida** (streaming ou base64) por endpoint dedicado.
+- Storage de mídia plugável: **disco local** por padrão, ou bucket **S3-compatível** (AWS S3,
+  MinIO, DigitalOcean Spaces) — configurável por env, com fallback automático pro local.
+
+### Grupos, comunidades & canais
+
+- **Grupos**: CRUD completo — criar, metadados, participantes (adicionar/remover/promover/
+  rebaixar), assunto, descrição, configurações (announce/locked), convite (gerar/revogar),
+  entrar por link, sair.
+- **Comunidades** (grupo-pai + subgrupos vinculados): CRUD completo — nome, descrição,
+  imagem, admins, membros agregados, convite, vincular/desvincular grupo, publicar no grupo
+  de anúncios (com fanout opcional) e ressincronizar.
+- **Canais (Newsletter)**: CRUD completo (criar, seguir/deixar de seguir, metadados) e envio
+  de **texto, mídia e enquete**.
+- **Perfil**: nome e foto da própria conta conectada, e foto de perfil de **qualquer contato,
+  grupo ou comunidade**.
+
+### Inbox — conversas persistidas
+
+- Tela de **conversas, contatos e mensagens** persistidos no Postgres (opt-in via flags de
+  env) — sobrevive a restart, independe de sessão ao vivo.
+- **Tempo real** via WebSocket, mídia renderizando na própria thread (imagem, vídeo, **áudio
+  que toca de verdade**, documento) e composer com anexo (arquivo + preview + progresso).
+
+### Observabilidade — painel de Logs/Atividade
+
+- Auditoria **cross-instância** de tudo que passa pela API: busca, tempo real, histograma de
+  eventos, filtros (status, tipo, rota, conta, plataforma) e export.
+
+### API keys com escopo & servidor MCP
+
+- Além da key mestra por instância, crie **keys com escopo restrito**
+  (`read`/`send`/`control`/`setting`/`app`/`delete`) — pra dar acesso de terceiro (bot,
+  agência, agente de IA) sem expor a key mestra. Uma key nunca concede a outra uma ação que
+  ela mesma não tem.
+- **Servidor MCP embutido** (`/instances/:id/mcp`): agentes de IA compatíveis com o
+  protocolo (Claude, etc.) leem chats/contatos e enviam mensagem, autenticados com uma key
+  escopada — cada chamada aparece automaticamente no painel de Logs.
 
 ### Confiabilidade
 
@@ -96,10 +136,10 @@ telemetria obrigatória.**
 - **Perfis de risco** (conservador/normal/agressivo) com **warmup** de conta nova, **auto-throttle**
   por sinais de risco e **checagem de número protegida** (teto + cache + rate-limit).
 
-### Contatos, grupos & canais
+### Contatos & identidade
 
-- Bloquear/desbloquear, **presença** ("digitando…"), marcar como lido, buscar mensagens paginadas,
-  **etiquetas** (WhatsApp Business), **canais/newsletter** e resolução de identidade **@lid ↔ número**.
+- Bloquear/desbloquear, **presença** ("digitando…"), marcar como lido, buscar mensagens
+  paginadas, **etiquetas** (WhatsApp Business) e resolução de identidade **@lid ↔ número**.
 
 ### Histórico & operação
 
@@ -108,15 +148,24 @@ telemetria obrigatória.**
 
 ## 🔌 Engines
 
-| `provider`  | Tipo        | Runtime                                | QR? | Oficial? |
-| ----------- | ----------- | -------------------------------------- | --- | -------- |
-| `baileys`   | não oficial | Node (WebSocket)                       | ✅  | ❌       |
-| `webjs`     | não oficial | Node + Chromium (Puppeteer)            | ✅  | ❌       |
-| `cloud`     | **oficial** | HTTP (Meta Graph API)                  | ❌  | ✅       |
-| `whatsmeow` | não oficial | **sidecar Go**                         | ✅  | ❌       |
+| `provider`  | Tipo        | Runtime                     | QR? | Oficial? |
+| ----------- | ----------- | --------------------------- | --- | -------- |
+| `baileys`   | não oficial | Node (WebSocket)            | ✅  | ❌       |
+| `webjs`     | não oficial | Node + Chromium (Puppeteer) | ✅  | ❌       |
+| `cloud`     | **oficial** | HTTP (Meta Graph API)       | ❌  | ✅       |
+| `whatsmeow` | não oficial | **sidecar Go**              | ✅  | ❌       |
 
 Cada instância declara suas **capabilities** (`GET /instances/:id/capabilities`) — o recurso que a
-engine não entrega responde de forma uniforme, nunca com erro genérico.
+engine não entrega responde de forma uniforme (`501`), nunca com erro genérico. Recorte das
+capabilities mais pedidas:
+
+| Recurso                                        | `baileys` | `webjs`  | `cloud` | `whatsmeow` |
+| ---------------------------------------------- | :-------: | :------: | :-----: | :---------: |
+| Mensagens (texto/mídia/interativos)            |    ✅     |    ✅    |   ✅    |     ✅      |
+| Grupos                                         |    ✅     |    ✅    |   ❌    |     ✅      |
+| Comunidades                                    |    ✅     | ❌ `501` |   ❌    |     ✅      |
+| Canais (Newsletter)                            |    ✅     |    ✅    |   ❌    |     ✅      |
+| Perfil (conta própria + foto de contato/grupo) |    ✅     |    ✅    |   ❌    |     ✅      |
 
 > ⚠️ **Aviso.** Baileys, whatsapp-web.js e whatsmeow são **não oficiais** e violam os Termos do
 > WhatsApp — há risco de banimento. Apenas a **Cloud API** é oficial. Use com responsabilidade e
@@ -126,6 +175,8 @@ engine não entrega responde de forma uniforme, nunca com erro genérico.
 
 - **Atendimento multi-atendente** — receba e responda por webhook/WebSocket, com status de entrega e leitura.
 - **Chatbots e automações** — plugue em n8n, filas ou seu backend via eventos unificados.
+- **Agentes de IA** — conecte Claude (ou outro agente MCP) direto na instância, com uma key
+  de escopo restrito controlando exatamente o que ele pode fazer.
 - **Notificações transacionais** — dispare em escala com anti-ban, idempotência e status rastreável.
 - **Consolidação de fornecedores** — coloque contas oficiais e não oficiais numa API só, sem reescrever nada.
 
@@ -136,13 +187,13 @@ cp .env.example .env        # ajuste chaves/secrets
 docker compose up --build
 ```
 
-| Serviço | URL |
-| --- | --- |
-| 🖥️ **Painel** | <http://localhost:8080> |
-| 🔌 **API** | <http://localhost:3000/api/v1> |
-| 📖 **Docs (Swagger)** | <http://localhost:3000/api/docs> |
-| ❤️ **Health** | <http://localhost:3000/api/health> |
-| 🐰 RabbitMQ (gestão) | <http://localhost:15672> |
+| Serviço               | URL                                |
+| --------------------- | ---------------------------------- |
+| 🖥️ **Painel**         | <http://localhost:8080>            |
+| 🔌 **API**            | <http://localhost:3000/api/v1>     |
+| 📖 **Docs (Swagger)** | <http://localhost:3000/api/docs>   |
+| ❤️ **Health**         | <http://localhost:3000/api/health> |
+| 🐰 RabbitMQ (gestão)  | <http://localhost:15672>           |
 
 Sobe `gateway` (Node), `web` (painel React), `postgres`, `redis`, `rabbitmq` e o sidecar `whatsmeow` (Go).
 No painel, cole a `GLOBAL_API_KEY` do `.env` e crie sua primeira instância.
@@ -174,8 +225,11 @@ curl $API/messages/<id>/status/<messageId> -H "apikey: <apiKey>"
 **Cloud API oficial** é só trocar o `provider` na criação:
 
 ```json
-{ "name": "oficial-01", "provider": "cloud",
-  "config": { "phoneNumberId": "...", "accessToken": "..." } }
+{
+  "name": "oficial-01",
+  "provider": "cloud",
+  "config": { "phoneNumberId": "...", "accessToken": "..." }
+}
 ```
 
 **Migrar de engine sem reparear** (mantém o device linkado):
@@ -188,22 +242,31 @@ curl -X POST $API/instances/<id>/provider \
 
 ## 📚 API
 
-Autenticação por header `apikey`: a **GLOBAL_API_KEY** (admin) ou a **apiKey da instância**.
-A superfície completa (com schemas e exemplos) fica no **Swagger em `/api/docs`**. Um recorte:
+Autenticação por header `apikey`: a **GLOBAL_API_KEY** (admin), a **apiKey mestra da
+instância** (acesso total) ou uma **key com escopo restrito** (`read`/`send`/`control`/
+`setting`/`app`/`delete` — ver seção de API keys abaixo). A superfície completa (com
+schemas e exemplos) fica no **Swagger em `/api/docs`**. Um recorte:
 
-| Área | Exemplos |
-| --- | --- |
-| **Instâncias** | `POST /instances` · `GET /instances/:id` · `POST /:id/connect` · `GET /:id/qr` · `POST /:id/pair-code` · `POST /:id/provider` · `GET /:id/capabilities` |
-| **Mensagens** | `POST /messages/:id/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `GET /:id/status/:messageId` |
-| **Eventos** | `PUT /instances/:id/events` (webhook · websocket · rabbitmq, por evento) · `PUT /:id/webhook` |
-| **Segurança** | `PUT /instances/:id/filters` (whitelist/blacklist JID) · webhook HMAC · `GET /:id/webhook/dlq` |
-| **Anti-ban** | `PUT /instances/:id/anti-ban` · `GET /:id/anti-ban/status` |
-| **Contatos** | `POST /:id/contacts/:jid/block` · `/presence` · `/numbers/check` · `GET /:id/chats/:jid/messages` |
-| **Etiquetas / Canais** | `GET/POST /instances/:id/labels` · `GET/POST /:id/newsletters` |
-| **Identidade** | `GET /instances/:id/identity/resolve` · `PUT /:id/settings` |
-| **Histórico** | `POST /instances/:id/history/import` · `GET /:id/history/import/:jobId` |
-| **Mídia** | `GET /messages/:id/media/:messageId` (download streaming/base64) |
-| **Sistema** | `GET /api/health` · `GET /api/docs` · webhooks de entrada `/api/webhooks/{cloud,whatsmeow}/:id` |
+| Área                    | Exemplos                                                                                                                                                |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Instâncias**          | `POST /instances` · `GET /instances/:id` · `POST /:id/connect` · `GET /:id/qr` · `POST /:id/pair-code` · `POST /:id/provider` · `GET /:id/capabilities` |
+| **Mensagens**           | `POST /messages/:id/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `GET /:id/status/:messageId`                                           |
+| **Grupos**              | `GET/POST /instances/:id/groups` · `/:jid/participants` · `/:jid/subject` · `/:jid/invite`                                                              |
+| **Comunidades**         | `GET/POST /instances/:id/communities` · `/:jid/admins` · `/:jid/groups` · `/:jid/announcement`                                                          |
+| **Canais (Newsletter)** | `GET/POST /instances/:id/newsletters` · `/:jid/follow` · `/:jid/message`                                                                                |
+| **Perfil**              | `GET /instances/:id/profile` (conta própria)                                                                                                            |
+| **Eventos**             | `PUT /instances/:id/events` (webhook · websocket · rabbitmq, por evento) · `PUT /:id/webhook`                                                           |
+| **Segurança**           | `PUT /instances/:id/filters` (whitelist/blacklist JID) · webhook HMAC · `GET /:id/webhook/dlq`                                                          |
+| **API keys & MCP**      | `POST/GET/DELETE /instances/:id/api-keys` · `POST /:id/mcp` (protocolo MCP)                                                                             |
+| **Anti-ban**            | `PUT /instances/:id/anti-ban` · `GET /:id/anti-ban/status`                                                                                              |
+| **Contatos**            | `POST /:id/contacts/:jid/block` · `/presence` · `/numbers/check` · `GET /:id/chats/:jid/messages`                                                       |
+| **Etiquetas**           | `GET/POST /instances/:id/labels` · `PUT /:labelId/associations`                                                                                         |
+| **Identidade**          | `GET /instances/:id/identity/resolve` · `PUT /:id/settings`                                                                                             |
+| **Inbox**               | `GET /instances/:id/chats` · `/chats/:jid/messages/db` · `/contacts` (conversas persistidas)                                                            |
+| **Logs / Atividade**    | `GET /activity-logs` · `/facets` · `/histogram` · `/export` (escopo admin)                                                                              |
+| **Histórico**           | `POST /instances/:id/history/import` · `GET /:id/history/import/:jobId`                                                                                 |
+| **Mídia**               | `GET /messages/:id/media/:messageId` (download streaming/base64)                                                                                        |
+| **Sistema**             | `GET /api/health` · `GET /api/docs` · webhooks de entrada `/api/webhooks/{cloud,whatsmeow}/:id`                                                         |
 
 > Rotas de negócio ficam em `/api/v1/*`; `health` e webhooks de entrada são **version-neutral**
 > (`/api/health`, `/api/webhooks/...`).
@@ -211,9 +274,12 @@ A superfície completa (com schemas e exemplos) fica no **Swagger em `/api/docs`
 ## 🖥️ Painel & Playground
 
 Um **painel web** (React + shadcn/ui) acompanha o gateway: crie instâncias, leia o QR, configure
-os transportes de eventos, defina o anti-ban e acompanhe o status ao vivo. O **Playground** embutido
-dispara qualquer endpoint direto do navegador (com a instância já selecionada, preview de QR e cURL
-gerado) — ideal para testar antes de integrar.
+os transportes de eventos, defina o anti-ban, gerencie **API keys escopadas e apps MCP**, e
+acompanhe o status ao vivo. O **Inbox** traz a lista de conversas persistidas com thread e
+mídia renderizando (áudio tocando de verdade); o **painel de Logs** dá observabilidade
+cross-instância em tempo real. O **Playground** embutido dispara qualquer endpoint direto do
+navegador (com a instância já selecionada, preview de QR e cURL gerado) — ideal para testar
+antes de integrar.
 
 ## 🧱 Stack
 
