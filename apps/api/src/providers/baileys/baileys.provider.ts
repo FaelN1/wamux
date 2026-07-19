@@ -40,6 +40,7 @@ import {
   SendListInput,
   SendMediaInput,
   SendPixInput,
+  SendLocationInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -93,6 +94,7 @@ export class BaileysProvider extends BaseProvider {
     reactions: true,
     editMessage: true,
     deleteMessage: true,
+    location: true,
     poll: true,
     pollResults: true,
     buttons: true,
@@ -429,6 +431,19 @@ export class BaileysProvider extends BaseProvider {
     }
 
     const sent = await this.socket().sendMessage(jid, content);
+    return this.result(sent, jid);
+  }
+
+  async sendLocation(input: SendLocationInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
+    const sent = await this.socket().sendMessage(jid, {
+      location: {
+        degreesLatitude: input.latitude,
+        degreesLongitude: input.longitude,
+        name: input.name,
+        address: input.address,
+      },
+    });
     return this.result(sent, jid);
   }
 

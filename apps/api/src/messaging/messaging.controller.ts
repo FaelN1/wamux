@@ -12,6 +12,7 @@ import { SendPixDto } from './dto/send-pix.dto';
 import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
+import { SendLocationDto } from './dto/send-location.dto';
 import { MessagingService } from './messaging.service';
 
 @ApiTags('Mensagens')
@@ -68,6 +69,13 @@ export class MessagingController {
   @ApiOperation({ summary: 'Envia botão PIX (copia-e-cola). Baileys-only, com fallback.' })
   sendPix(@Param('id') id: string, @Body() dto: SendPixDto) {
     return this.messaging.sendPix(id, dto);
+  }
+
+  @Post(':id/location')
+  @RequireScope(ApiKeyAction.SEND)
+  @ApiOperation({ summary: 'Envia uma mensagem de localização (lat/long).' })
+  sendLocation(@Param('id') id: string, @Body() dto: SendLocationDto) {
+    return this.messaging.sendLocation(id, dto);
   }
 
   @Post(':id/reaction')

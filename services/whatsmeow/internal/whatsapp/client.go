@@ -157,6 +157,15 @@ type StatusRequest struct {
 	Font            int    `json:"font"`
 }
 
+type LocationRequest struct {
+	To        string  `json:"to"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Name      string  `json:"name"`
+	Address   string  `json:"address"`
+	ReplyTo   string  `json:"reply_to"`
+}
+
 type CommunityRequest struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
@@ -477,6 +486,37 @@ func (c *Client) SendStatus(req StatusRequest) (string, error) {
 		return "", fmt.Errorf("failed to send status: %w", err)
 	}
 
+	return resp.ID, nil
+}
+
+func (c *Client) SendLocation(req LocationRequest) (string, error) {
+	ctx, cancel := waCtx()
+	defer cancel()
+	jid, err := parseJID(req.To)
+	if err != nil {
+		return "", err
+	}
+
+	locMsg := &waE2E.LocationMessage{
+		DegreesLatitude:  proto.Float64(req.Latitude),
+		DegreesLongitude: proto.Float64(req.Longitude),
+	}
+	if req.Name != "" {
+		locMsg.Name = proto.String(req.Name)
+	}
+	if req.Address != "" {
+		locMsg.Address = proto.String(req.Address)
+	}
+
+	msg := &waE2E.Message{LocationMessage: locMsg}
+	if req.ReplyTo != "" {
+		setContextInfo(msg, req.ReplyTo)
+	}
+
+	resp, err := c.WAClient.SendMessage(ctx, jid, msg)
+	if err != nil {
+		return "", fmt.Errorf("failed to send location: %w", err)
+	}
 	return resp.ID, nil
 }
 
@@ -1477,6 +1517,8 @@ func setContextInfo(msg *waE2E.Message, replyTo string) {
 		msg.AudioMessage.ContextInfo = ctxInfo
 	} else if msg.DocumentMessage != nil {
 		msg.DocumentMessage.ContextInfo = ctxInfo
+	} else if msg.LocationMessage != nil {
+		msg.LocationMessage.ContextInfo = ctxInfo
 	}
 }
 

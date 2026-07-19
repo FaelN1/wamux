@@ -20,6 +20,7 @@ import {
   DeleteMessageInput,
   SendButtonsInput,
   SendListInput,
+  SendLocationInput,
   SendMediaInput,
   SendPixInput,
   SendPollInput,
@@ -30,6 +31,7 @@ import { WhatsAppProvider } from '../providers/provider.interface';
 import { ReactMessageDto } from './dto/react-message.dto';
 import { EditMessageDto } from './dto/edit-message.dto';
 import { DeleteMessageDto } from './dto/delete-message.dto';
+import { SendLocationDto } from './dto/send-location.dto';
 import { OUTBOUND_QUEUE, OutboundJob, OutboundKind, OutboundPayload } from './outbound.constants';
 import { PollStore } from './poll-store.service';
 import { MessageLogService } from './message-log.service';
@@ -171,6 +173,19 @@ export class MessagingService {
     const payload: SendPixInput = { to: dto.to, pix: dto.pix, fallbackToText: dto.fallbackToText };
     const kind = await this.resolveInteractive(instanceId, 'pix', payload);
     return this.dispatch(instanceId, kind, this.maybeText(kind, payload), dto.clientMessageId);
+  }
+
+  async sendLocation(instanceId: string, dto: SendLocationDto): Promise<SendOutcome> {
+    await this.cap(instanceId, 'location', (x) => x.sendLocation);
+    const payload: SendLocationInput = {
+      to: dto.to,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      name: dto.name,
+      address: dto.address,
+      quotedMessageId: dto.quotedMessageId,
+    };
+    return this.dispatch(instanceId, 'location', payload, dto.clientMessageId);
   }
 
   async pollResults(instanceId: string, messageId: string): Promise<PollResults> {
@@ -407,6 +422,8 @@ export class MessagingService {
         return provider.sendList(payload as SendListInput);
       case 'pix':
         return provider.sendPix(payload as SendPixInput);
+      case 'location':
+        return provider.sendLocation!(payload as SendLocationInput);
     }
   }
 

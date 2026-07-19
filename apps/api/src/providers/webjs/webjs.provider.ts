@@ -6,6 +6,7 @@ import {
   Message,
   MessageMedia,
   Poll,
+  Location,
   Channel,
 } from 'whatsapp-web.js';
 import * as QRCode from 'qrcode';
@@ -32,6 +33,7 @@ import {
   ProviderType,
   SendMediaInput,
   SendPollInput,
+  SendLocationInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -65,6 +67,7 @@ export class WebjsProvider extends BaseProvider {
     reactions: true,
     editMessage: true,
     deleteMessage: true,
+    location: true,
     groups: true,
     buttons: false,
     list: false,
@@ -175,6 +178,16 @@ export class WebjsProvider extends BaseProvider {
       caption: input.caption,
       sendMediaAsSticker: input.type === 'sticker',
     });
+    return { id: sent.id._serialized, to: chatId, timestamp: sent.timestamp, status: 'sent' };
+  }
+
+  async sendLocation(input: SendLocationInput): Promise<SendResult> {
+    const chatId = this.toChatId(input.to);
+    const loc = new Location(input.latitude, input.longitude, {
+      name: input.name,
+      address: input.address,
+    } as unknown as ConstructorParameters<typeof Location>[2]);
+    const sent = await this.requireClient().sendMessage(chatId, loc);
     return { id: sent.id._serialized, to: chatId, timestamp: sent.timestamp, status: 'sent' };
   }
 

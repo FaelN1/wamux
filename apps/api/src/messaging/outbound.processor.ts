@@ -8,6 +8,7 @@ import { WhatsAppProvider } from '../providers/provider.interface';
 import {
   SendButtonsInput,
   SendListInput,
+  SendLocationInput,
   SendMediaInput,
   SendPixInput,
   SendPollInput,
@@ -81,6 +82,8 @@ export class OutboundProcessor extends WorkerHost {
         return provider.sendList(payload as SendListInput);
       case 'pix':
         return provider.sendPix(payload as SendPixInput);
+      case 'location':
+        return provider.sendLocation!(payload as SendLocationInput);
     }
   }
 }

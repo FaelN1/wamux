@@ -7,6 +7,7 @@ import {
   NormalizedMessage,
   ProviderType,
   ReactMessageInput,
+  SendLocationInput,
   SendMediaInput,
   SendResult,
   SendTextInput,
@@ -27,6 +28,7 @@ export class CloudApiProvider extends BaseProvider {
   /** A API oficial da Meta expõe reação/localização/contato, mas NÃO editar/apagar/status. */
   readonly capabilities = {
     reactions: true,
+    location: true,
   };
   private http!: AxiosInstance;
 
@@ -135,6 +137,23 @@ export class CloudApiProvider extends BaseProvider {
       to,
       type: 'reaction',
       reaction: { message_id: input.messageId, emoji: input.emoji },
+    });
+    return this.result(res.data, to);
+  }
+
+  async sendLocation(input: SendLocationInput): Promise<SendResult> {
+    const to = this.toNumber(input.to);
+    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'location',
+      location: {
+        latitude: input.latitude,
+        longitude: input.longitude,
+        name: input.name,
+        address: input.address,
+      },
     });
     return this.result(res.data, to);
   }

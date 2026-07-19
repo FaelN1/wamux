@@ -46,6 +46,8 @@ export interface ProviderCapabilities {
   editMessage?: boolean;
   /** apagar uma mensagem (para todos / revoke). */
   deleteMessage?: boolean;
+  /** enviar mensagem de localização. */
+  location?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

@@ -28,6 +28,7 @@ import {
   ProviderType,
   SendMediaInput,
   SendPollInput,
+  SendLocationInput,
   ReactMessageInput,
   EditMessageInput,
   DeleteMessageInput,
@@ -91,6 +92,7 @@ export class WhatsmeowProvider extends BaseProvider {
     reactions: true,
     editMessage: true,
     deleteMessage: true,
+    location: true,
     poll: true,
     pollResults: false,
     // `POST /message/poll` funciona pra DM/grupo normal (confirmado ao vivo),
@@ -379,6 +381,19 @@ export class WhatsmeowProvider extends BaseProvider {
       to: jid,
       message_id: input.messageId,
       text: input.text,
+    });
+    return this.result(res.data, jid);
+  }
+
+  async sendLocation(input: SendLocationInput): Promise<SendResult> {
+    const jid = this.toJid(input.to);
+    const res = await this.client().post('/message/location', {
+      to: jid,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      name: input.name,
+      address: input.address,
+      reply_to: input.quotedMessageId,
     });
     return this.result(res.data, jid);
   }

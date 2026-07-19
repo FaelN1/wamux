@@ -348,6 +348,17 @@ export interface DeleteMessageInput extends MessageRef {
   forEveryone?: boolean;
 }
 
+// ── novos tipos de envio ─────────────────────────────
+
+export interface SendLocationInput {
+  to: string;
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  quotedMessageId?: string;
+}
+
 // ── coleta de voto + agregação ──────────────────────
 
 /**

@@ -1,6 +1,7 @@
 import {
   SendButtonsInput,
   SendListInput,
+  SendLocationInput,
   SendMediaInput,
   SendPixInput,
   SendPollInput,
@@ -9,7 +10,7 @@ import {
 
 export const OUTBOUND_QUEUE = 'messages-out';
 
-export type OutboundKind = 'text' | 'media' | 'poll' | 'buttons' | 'list' | 'pix';
+export type OutboundKind = 'text' | 'media' | 'poll' | 'buttons' | 'list' | 'pix' | 'location';
 
 export type OutboundPayload =
   | SendTextInput
@@ -17,7 +18,8 @@ export type OutboundPayload =
   | SendPollInput
   | SendButtonsInput
   | SendListInput
-  | SendPixInput;
+  | SendPixInput
+  | SendLocationInput;
 
 export interface OutboundJob {
   instanceId: string;

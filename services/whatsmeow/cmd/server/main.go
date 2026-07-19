@@ -281,6 +281,7 @@ func main() {
 	messageGroup.Post("/poll", messageHandler.SendPoll)
 	messageGroup.Post("/react", messageHandler.React)
 	messageGroup.Post("/edit", messageHandler.Edit)
+	messageGroup.Post("/location", messageHandler.SendLocation)
 	messageGroup.Post("/status", messageHandler.SendStatus)
 	messageGroup.Post("/broadcast", messageHandler.Broadcast)
 	messageGroup.Delete("/", messageHandler.Delete)

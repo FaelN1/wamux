@@ -41,6 +41,7 @@ import {
   ReactMessageInput,
   SendButtonsInput,
   SendListInput,
+  SendLocationInput,
   SendMediaInput,
   SendPixInput,
   SendPollInput,
@@ -300,6 +301,10 @@ export interface WhatsAppProvider {
   editMessage?(input: EditMessageInput): Promise<SendResult>;
   /** Apaga uma mensagem (para todos / revoke, ou só pra mim). */
   deleteMessage?(input: DeleteMessageInput): Promise<SendResult>;
+
+  // ── novos tipos de envio (gated por capabilities.*) ──
+  /** Envia uma mensagem de localização (lat/long). */
+  sendLocation?(input: SendLocationInput): Promise<SendResult>;
 
   on<K extends keyof ProviderEventMap>(
     event: K,
