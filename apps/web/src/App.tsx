@@ -16,11 +16,13 @@ import { PlaygroundPage } from '@/pages/PlaygroundPage';
 import { InboxPage } from '@/pages/InboxPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { TemplatesPage } from '@/pages/TemplatesPage';
+import { MaturationPage } from '@/pages/MaturationPage';
 
 const TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/instances': 'Instâncias',
   '/inbox': 'Inbox',
+  '/maturation': 'Maturação',
   '/logs': 'Logs',
   '/playground': 'Playground',
   '/settings': 'Configurações',
@@ -40,6 +42,7 @@ export default function App() {
         <Route path="instances" element={<InstancesPage />} />
         <Route path="inbox" element={<InboxPage />} />
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="maturation" element={<MaturationPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="playground" element={<PlaygroundPage />} />
         <Route path="settings" element={<SettingsPage onLogout={logout} />} />

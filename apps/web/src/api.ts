@@ -26,6 +26,7 @@ import {
   type MessageTemplate,
   type CreateTemplateInput,
   type SendTemplateInput,
+  type MaturationPlanDTO,
 } from '@wamux/shared';
 
 // API versionada: rotas de negócio em /api/v1; health/webhooks são
@@ -367,6 +368,63 @@ export function useSendTemplate(instanceId: string) {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+  });
+}
+
+// ── maturação (aquecimento de chip) — escopo admin ───────────────────────
+export type { MaturationPlanDTO };
+
+/** Planos com progresso computado + feed de eventos (o painel "ao vivo" poll a cada 5s). */
+export function useMaturationPlans() {
+  return useQuery({
+    queryKey: ['maturation-plans'],
+    queryFn: () => req<MaturationPlanDTO[]>('/maturation/plans'),
+    refetchInterval: 5000,
+  });
+}
+
+export interface MaturationPlanBody {
+  name: string;
+  instanceIds: string[];
+  config: Record<string, unknown>;
+}
+
+export function useCreateMaturationPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MaturationPlanBody) =>
+      req<MaturationPlanDTO>('/maturation/plans', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['maturation-plans'] }),
+  });
+}
+
+export function useUpdateMaturationPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<MaturationPlanBody> & { id: string }) =>
+      req<MaturationPlanDTO>(`/maturation/plans/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['maturation-plans'] }),
+  });
+}
+
+/** start também retoma (pausado) e reinicia a rampa (concluído). */
+export function useMaturationAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'start' | 'pause' }) =>
+      req<MaturationPlanDTO>(`/maturation/plans/${id}/${action}`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['maturation-plans'] }),
+  });
+}
+
+export function useDeleteMaturationPlan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => req(`/maturation/plans/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['maturation-plans'] }),
   });
 }
 

@@ -1,6 +1,14 @@
-import { AlertTriangle, CheckCheck, MessageSquare, PlugZap, Send, Webhook } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCheck,
+  MessageSquare,
+  PlugZap,
+  Send,
+  Sprout,
+  Webhook,
+} from 'lucide-react';
 import { PROVIDERS } from '@wamux/shared';
-import { useInstances, useStats } from '@/api';
+import { useInstances, useMaturationPlans, useStats } from '@/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const fmt = (n: number) => n.toLocaleString('pt-BR');
@@ -115,9 +123,23 @@ function DailyBars({ data }: { data: { date: string; sent: number; received: num
   );
 }
 
+const PLAN_STATUS_TONE: Record<string, string> = {
+  running: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  paused: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  completed: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  draft: 'bg-muted text-muted-foreground',
+};
+const PLAN_STATUS_LABEL: Record<string, string> = {
+  running: 'Rodando',
+  paused: 'Pausado',
+  completed: 'Concluído',
+  draft: 'Rascunho',
+};
+
 export function DashboardPage() {
   const { data: instances } = useInstances();
   const { data: stats } = useStats();
+  const { data: plans } = useMaturationPlans();
   const list = instances ?? [];
 
   const statusOf = (i: (typeof list)[number]) => i.liveStatus ?? i.status;
@@ -146,6 +168,18 @@ export function DashboardPage() {
     count: list.filter((i) => i.provider === p.value).length,
   }));
 
+  // ── maturação (aquecimento de chip) ──
+  const planList = plans ?? [];
+  const runningPlans = planList.filter((p) => p.status === 'running');
+  // números distintos em planos rodando (um número pode estar em 1 plano só,
+  // mas dedup por garantia).
+  const warmingInstances = new Set(runningPlans.flatMap((p) => p.instanceIds)).size;
+  const warmSentToday = runningPlans.reduce(
+    (acc, p) => acc + p.instances.reduce((a, i) => a + i.sentToday, 0),
+    0,
+  );
+  const warmTotal = planList.reduce((acc, p) => acc + p.totalSent, 0);
+
   const m = stats?.messages;
   const w = stats?.webhooks;
   const ack = m?.ack;
@@ -156,13 +190,26 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard
           label="Instâncias conectadas"
           value={`${connected}/${total}`}
           hint={total ? `${pct(total ? connected / total : 0)} online` : 'nenhuma instância'}
           icon={PlugZap}
           tone={connected === total && total > 0 ? 'good' : attention.length ? 'warn' : 'default'}
+        />
+        <StatCard
+          label="Em maturação"
+          value={warmingInstances}
+          hint={
+            runningPlans.length
+              ? `${runningPlans.length} plano(s) · ${fmt(warmSentToday)} msgs hoje`
+              : planList.length
+                ? `${planList.length} plano(s), nenhum rodando`
+                : 'nenhum plano'
+          }
+          icon={Sprout}
+          tone={warmingInstances > 0 ? 'good' : 'default'}
         />
         <StatCard
           label="Mensagens hoje"
@@ -333,6 +380,63 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Maturação (aquecimento de chip) — só aparece quando há planos */}
+      {planList.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+              <span className="flex items-center gap-2">
+                <Sprout className="size-4 text-primary" /> Maturação em andamento
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">
+                {warmingInstances} número(s) aquecendo · {fmt(warmTotal)} msgs no total
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {planList.slice(0, 6).map((p) => {
+              const rampPct = Math.min(
+                100,
+                ((p.status === 'completed' ? p.config.durationDays : p.dayIndex) /
+                  Math.max(p.config.durationDays, 1)) *
+                  100,
+              );
+              const sentToday = p.instances.reduce((a, i) => a + i.sentToday, 0);
+              const targetToday = p.instances.reduce((a, i) => a + i.targetToday, 0);
+              return (
+                <div key={p.id} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium">{p.name}</span>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          PLAN_STATUS_TONE[p.status] ?? PLAN_STATUS_TONE.draft
+                        }`}
+                      >
+                        {PLAN_STATUS_LABEL[p.status] ?? p.status}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      dia {Math.min(p.dayIndex + 1, p.config.durationDays)}/{p.config.durationDays}
+                      {p.status === 'running' && ` · hoje ${fmt(sentToday)}/${fmt(targetToday)}`}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width] duration-500"
+                      style={{ width: `${rampPct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {planList.length > 6 && (
+              <p className="text-xs text-muted-foreground">+{planList.length - 6} plano(s)…</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

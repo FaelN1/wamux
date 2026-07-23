@@ -7,6 +7,7 @@ import {
   MessageSquare,
   ScrollText,
   Settings,
+  Sprout,
   TerminalSquare,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -25,14 +26,44 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 
-const NAV: { path: string; label: string; icon: typeof LayoutDashboard }[] = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/instances', label: 'Instâncias', icon: MessageSquare },
-  { path: '/inbox', label: 'Inbox', icon: Inbox },
-  { path: '/templates', label: 'Templates', icon: FileText },
-  { path: '/logs', label: 'Logs', icon: ScrollText },
-  { path: '/playground', label: 'Playground', icon: TerminalSquare },
-  { path: '/settings', label: 'Configurações', icon: Settings },
+interface NavItem {
+  path: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+}
+
+/**
+ * Navegação agrupada por área: Visão geral (métricas), Operação (o que você
+ * opera no dia a dia: números, aquecimento e conversas), Ferramentas (montar
+ * templates / testar a API) e Sistema (auditoria + configuração).
+ */
+const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
+  {
+    label: 'Visão geral',
+    items: [{ path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }],
+  },
+  {
+    label: 'Operação',
+    items: [
+      { path: '/instances', label: 'Instâncias', icon: MessageSquare },
+      { path: '/maturation', label: 'Maturação', icon: Sprout },
+      { path: '/inbox', label: 'Inbox', icon: Inbox },
+    ],
+  },
+  {
+    label: 'Ferramentas',
+    items: [
+      { path: '/templates', label: 'Templates', icon: FileText },
+      { path: '/playground', label: 'Playground', icon: TerminalSquare },
+    ],
+  },
+  {
+    label: 'Sistema',
+    items: [
+      { path: '/logs', label: 'Logs', icon: ScrollText },
+      { path: '/settings', label: 'Configurações', icon: Settings },
+    ],
+  },
 ];
 
 export function AppSidebar({ onLogout }: { onLogout: () => void }) {
@@ -52,28 +83,30 @@ export function AppSidebar({ onLogout }: { onLogout: () => void }) {
       </SidebarHeader>
       <SidebarSeparator />
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Menu</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {NAV.map((item) => (
-                <SidebarMenuItem key={item.path}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === item.path}
-                    tooltip={item.label}
-                    className="transition-colors hover:[&>svg]:text-primary data-[active=true]:border-l-2 data-[active=true]:border-primary data-[active=true]:pl-1.5 [&[data-active=true]>svg]:text-primary"
-                  >
-                    <NavLink to={item.path}>
-                      <item.icon />
-                      <span>{item.label}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname === item.path}
+                      tooltip={item.label}
+                      className="transition-colors hover:[&>svg]:text-primary data-[active=true]:border-l-2 data-[active=true]:border-primary data-[active=true]:pl-1.5 [&[data-active=true]>svg]:text-primary"
+                    >
+                      <NavLink to={item.path}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
