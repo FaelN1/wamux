@@ -89,6 +89,14 @@ export default () => ({
     verifyToken: process.env.CLOUD_API_VERIFY_TOKEN ?? '',
   },
 
+  // Maturação (aquecimento de chip). Para variar as conversas com foto/vídeo
+  // o motor busca mídia num provedor de stock grátis (Pexels — pegue a chave
+  // em https://www.pexels.com/api/, grátis). Sem chave, o motor manda só
+  // texto (+ enquete/localização, que são geradas sem API).
+  maturation: {
+    pexelsApiKey: process.env.PEXELS_API_KEY ?? '',
+  },
+
   // Persistência do Inbox (contato-chat/mensagens). Opt-in por privacidade —
   // default off. Nomes espelham as flags DATABASE_SAVE_* da Evolution API
   // (familiaridade pra quem migra). Ver docs/inbox-persistencia-handoff.md.

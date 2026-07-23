@@ -33,6 +33,7 @@ import { InboxModule } from './inbox/inbox.module';
 import { ActivityLogModule } from './activity-log/activity-log.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { McpModule } from './mcp/mcp.module';
+import { MaturationModule } from './maturation/maturation.module';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { McpModule } from './mcp/mcp.module';
     HealthModule,
     InboxModule,
     McpModule,
+    MaturationModule,
   ],
 })
 export class AppModule {}
