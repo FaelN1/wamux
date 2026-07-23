@@ -11,6 +11,7 @@ export * from './flows';
 export * from './calling';
 export * from './filters';
 export * from './anti-ban';
+export * from './maturation';
 export * from './instance';
 export * from './events';
 export * from './settings';
