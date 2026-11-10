@@ -25,6 +25,9 @@ BRANCH="${WAMUX_BRANCH:-main}"
 INSTALL_DIR="${WAMUX_DIR:-}"
 ASSUME_YES=0
 NO_START=0
+HTTPS_DOMAIN="${WAMUX_DOMAIN:-}"
+HTTPS_EMAIL="${WAMUX_EMAIL:-}"
+AGREE_TOS=0
 
 # ── apresentação ─────────────────────────────────────────────
 
@@ -54,6 +57,9 @@ Instalador interativo do WAMux.
 Opções:
   --dir <pasta>     pasta de instalação (padrão: ./wamux)
   --branch <nome>   branch/tag a instalar (padrão: main)
+  --domain <host>   domínio para HTTPS (nginx + Let's Encrypt) — só Linux
+  --email <email>   e-mail da conta Let's Encrypt (avisos de expiração)
+  --agree-tos       aceita os termos do Let's Encrypt (necessário com --yes)
   --yes             não pergunta nada: usa os padrões e gera os segredos
   --no-start        só prepara (.env), não sobe os containers
   -h, --help        mostra esta ajuda
@@ -74,6 +80,20 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "--branch precisa de um valor"
       BRANCH="$2"
       shift 2
+      ;;
+    --domain)
+      [ $# -ge 2 ] || die "--domain precisa de um valor"
+      HTTPS_DOMAIN="$2"
+      shift 2
+      ;;
+    --email)
+      [ $# -ge 2 ] || die "--email precisa de um valor"
+      HTTPS_EMAIL="$2"
+      shift 2
+      ;;
+    --agree-tos)
+      AGREE_TOS=1
+      shift
       ;;
     --yes | -y)
       ASSUME_YES=1
@@ -193,6 +213,217 @@ port_in_use() {
   fi
 }
 
+# ── HTTPS: nginx + Let's Encrypt ─────────────────────────────
+
+SUDO=''
+PKG=''
+
+# O proxy é instalado no HOST (não em container): precisa de Linux com apt ou
+# dnf e de root/sudo. Retorna 1 (com o motivo em HTTPS_WHY) quando não dá.
+https_supported() {
+  HTTPS_WHY=''
+  if [ "$OS" != "Linux" ]; then
+    HTTPS_WHY="a configuração automática de nginx + certificado só existe para Linux"
+    return 1
+  fi
+  if has apt-get; then
+    PKG=apt
+  elif has dnf; then
+    PKG=dnf
+  else
+    HTTPS_WHY="não encontrei apt nem dnf para instalar nginx e certbot"
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ]; then
+    SUDO=''
+  elif has sudo; then
+    SUDO='sudo'
+  else
+    HTTPS_WHY="é preciso ser root ou ter sudo para instalar o nginx"
+    return 1
+  fi
+  return 0
+}
+
+valid_domain() {
+  printf '%s' "$1" | grep -Eq '^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$'
+}
+
+valid_email() {
+  printf '%s' "$1" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+}
+
+resolve_host() {
+  if has getent; then
+    getent ahostsv4 "$1" 2>/dev/null | awk 'NR==1 {print $1}'
+  elif has dig; then
+    dig +short A "$1" 2>/dev/null | grep -E '^[0-9.]+$' | head -n 1
+  elif has host; then
+    host -t A "$1" 2>/dev/null | awk '/has address/ {print $4; exit}'
+  fi
+}
+
+# Bloco de servidor: um domínio só. /api e /events (WebSocket) vão para o
+# gateway; o resto, para o painel. O certbot acrescenta o 443 e o redirect.
+nginx_conf() {
+  local domain="$1" body_mb="$2"
+  cat <<EOF
+# WAMux — gerado pelo install.sh. Alterações manuais são preservadas em backup
+# (.bak-<data>) quando o instalador regrava este arquivo.
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${domain};
+
+  # mídia em base64 no corpo JSON: acompanha MEDIA_MAX_SIZE_MB (+40%).
+  client_max_body_size ${body_mb}m;
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 120s;
+    proxy_request_buffering off;
+  }
+
+  # WebSocket de eventos em tempo real.
+  location /events {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 3600s;
+  }
+
+  # Painel.
+  location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
+}
+EOF
+}
+
+# Instala nginx + certbot, grava o site e pede o certificado. Falhas aqui NÃO
+# abortam a instalação: a stack sobe do mesmo jeito e o resumo diz como repetir.
+HTTPS_DONE=0
+CERTBOT_CMD=''
+setup_https() {
+  local domain="$1" email="$2" body_mb conf link='' ip local_ips
+
+  step "HTTPS: nginx + Let's Encrypt para $domain"
+
+  ip="$(resolve_host "$domain" || true)"
+  if [ -z "$ip" ]; then
+    warn "$domain não resolve para nenhum IP. Crie o registro A no DNS apontando para este servidor."
+    confirm "Tentar emitir o certificado mesmo assim?" n || return 1
+  else
+    local_ips="$(hostname -I 2>/dev/null || true)"
+    case " $local_ips " in
+      *" $ip "*) ok "$domain aponta para este servidor ($ip)" ;;
+      *)
+        warn "$domain aponta para $ip, que não é um IP desta máquina (normal atrás de NAT/balanceador)."
+        confirm "Esse IP chega neste servidor nas portas 80 e 443?" s || return 1
+        ;;
+    esac
+  fi
+
+  if ! has nginx || ! has certbot; then
+    info "Instalando nginx e certbot (${PKG})…"
+    if [ "$PKG" = apt ]; then
+      $SUDO apt-get update -qq &&
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx certbot python3-certbot-nginx ||
+        { warn "Falha ao instalar nginx/certbot pelo apt."; return 1; }
+    else
+      $SUDO dnf install -y -q nginx certbot python3-certbot-nginx ||
+        { warn "Falha ao instalar nginx/certbot pelo dnf (em RHEL/Alma/Rocky o certbot vem do EPEL: 'dnf install epel-release')."; return 1; }
+    fi
+  fi
+  ok "nginx $(nginx -v 2>&1 | sed 's/.*nginx\///') · $(certbot --version 2>&1 | head -n 1)"
+
+  body_mb="$(get_env .env MEDIA_MAX_SIZE_MB)"
+  case "$body_mb" in '' | *[!0-9]*) body_mb=100 ;; esac
+  body_mb=$((body_mb * 14 / 10))
+
+  if [ -d /etc/nginx/sites-available ]; then
+    conf=/etc/nginx/sites-available/wamux.conf
+    link=/etc/nginx/sites-enabled/wamux.conf
+  else
+    conf=/etc/nginx/conf.d/wamux.conf
+  fi
+
+  if $SUDO test -f "$conf"; then
+    if $SUDO grep -q 'managed by Certbot' "$conf" && $SUDO grep -q "server_name ${domain};" "$conf"; then
+      ok "Site já configurado com certificado em $conf — mantido."
+      HTTPS_DONE=1
+      return 0
+    fi
+    $SUDO cp "$conf" "$conf.bak-$(date +%Y%m%d-%H%M%S)"
+    info "Configuração anterior do site salva em backup."
+  fi
+
+  nginx_conf "$domain" "$body_mb" | $SUDO tee "$conf" >/dev/null
+  [ -n "$link" ] && $SUDO ln -sf "$conf" "$link"
+
+  if ! $SUDO nginx -t >/dev/null 2>&1; then
+    warn "O nginx rejeitou a configuração:"
+    $SUDO nginx -t 2>&1 | sed 's/^/    /' || true
+    $SUDO rm -f "$conf"
+    [ -n "$link" ] && $SUDO rm -f "$link"
+    warn "Removi o site do WAMux para não derrubar os outros sites deste nginx."
+    return 1
+  fi
+  if has systemctl; then
+    $SUDO systemctl enable --now nginx >/dev/null 2>&1 || true
+    $SUDO systemctl reload nginx || { warn "Não consegui recarregar o nginx."; return 1; }
+  else
+    $SUDO nginx -s reload 2>/dev/null || $SUDO nginx || { warn "Não consegui iniciar o nginx."; return 1; }
+  fi
+  ok "nginx configurado: $conf"
+
+  if has ufw && $SUDO ufw status 2>/dev/null | grep -q '^Status: active'; then
+    if confirm "O firewall (ufw) está ativo. Liberar as portas 80 e 443?" s; then
+      $SUDO ufw allow 80/tcp >/dev/null && $SUDO ufw allow 443/tcp >/dev/null && ok "Portas 80 e 443 liberadas no ufw"
+    fi
+  elif has firewall-cmd && $SUDO firewall-cmd --state >/dev/null 2>&1; then
+    if confirm "O firewall (firewalld) está ativo. Liberar http e https?" s; then
+      $SUDO firewall-cmd --permanent --add-service=http --add-service=https >/dev/null &&
+        $SUDO firewall-cmd --reload >/dev/null && ok "http e https liberados no firewalld"
+    fi
+  fi
+
+  CERTBOT_CMD="${SUDO:+$SUDO }certbot --nginx -d $domain -m $email --agree-tos --no-eff-email --redirect --non-interactive --keep-until-expiring"
+  info "Pedindo o certificado ao Let's Encrypt…"
+  if $SUDO certbot --nginx -d "$domain" -m "$email" --agree-tos --no-eff-email --redirect \
+    --non-interactive --keep-until-expiring; then
+    ok "Certificado emitido e HTTPS ativo em https://$domain"
+    HTTPS_DONE=1
+  else
+    warn "O certbot não conseguiu emitir o certificado. Causas comuns: DNS ainda não propagou, porta 80 bloqueada no provedor ou limite de emissões do Let's Encrypt."
+    return 1
+  fi
+
+  if has systemctl && systemctl list-timers --all 2>/dev/null | grep -Eq 'certbot|snap\.certbot'; then
+    ok "Renovação automática ativa (timer do certbot)."
+  elif [ -f /etc/cron.d/certbot ]; then
+    ok "Renovação automática ativa (cron do certbot)."
+  else
+    warn "Não encontrei o agendamento de renovação. Agende: ${SUDO:+$SUDO }certbot renew --quiet (duas vezes ao dia)."
+  fi
+  return 0
+}
+
 # ── 1. pré-requisitos ────────────────────────────────────────
 
 printf '%s\n' "${BOLD}WAMux — instalação${RESET}"
@@ -306,12 +537,41 @@ if [ "$CONFIGURE" -eq 1 ]; then
   info "Enter aceita o valor entre colchetes."
 
   DEFAULT_URL="$(prev PUBLIC_BASE_URL)"
-  ask PUBLIC_URL "URL pública do gateway (a que seus clientes e a Meta vão chamar)" "${DEFAULT_URL:-http://localhost:3000}"
-  PUBLIC_URL="${PUBLIC_URL%/}"
-  case "$PUBLIC_URL" in
-    http://* | https://*) ;;
-    *) die "A URL pública precisa começar com http:// ou https://" ;;
-  esac
+
+  # Domínio + HTTPS: com ele a URL pública já fica definida.
+  if [ -z "$HTTPS_DOMAIN" ] && https_supported; then
+    info "HTTPS: se você tem um domínio apontado para este servidor, o instalador configura o"
+    info "nginx como proxy e pede o certificado gratuito do Let's Encrypt (renovação automática)."
+    if confirm "Configurar domínio com HTTPS agora?" n; then
+      ask HTTPS_DOMAIN "Domínio (ex.: wamux.suaempresa.com)" "$(printf '%s' "$DEFAULT_URL" | sed -n 's#^https://\([^/:]*\).*#\1#p')"
+    fi
+  elif [ -z "$HTTPS_DOMAIN" ] && [ "$OS" = "Linux" ]; then
+    info "HTTPS automático indisponível: $HTTPS_WHY."
+  fi
+
+  if [ -n "$HTTPS_DOMAIN" ]; then
+    https_supported || die "Não dá para configurar o HTTPS aqui: $HTTPS_WHY."
+    HTTPS_DOMAIN="$(printf '%s' "$HTTPS_DOMAIN" | tr 'A-Z' 'a-z' | sed 's#^https\{0,1\}://##; s#/.*##')"
+    valid_domain "$HTTPS_DOMAIN" || die "Domínio inválido: $HTTPS_DOMAIN"
+    [ -n "$HTTPS_EMAIL" ] || ask HTTPS_EMAIL "E-mail para o Let's Encrypt (avisos de expiração do certificado)"
+    valid_email "$HTTPS_EMAIL" || die "E-mail inválido: ${HTTPS_EMAIL:-vazio}"
+    if [ "$AGREE_TOS" -eq 0 ]; then
+      info "Termos do Let's Encrypt: https://letsencrypt.org/repository/"
+      if [ "$ASSUME_YES" -eq 1 ]; then
+        die "Com --yes, aceite os termos do Let's Encrypt explicitamente com --agree-tos."
+      fi
+      confirm "Você aceita os termos de serviço do Let's Encrypt?" n || die "Sem aceitar os termos não é possível emitir o certificado. Rode de novo sem informar o domínio para instalar sem HTTPS."
+    fi
+    PUBLIC_URL="https://$HTTPS_DOMAIN"
+    ok "URL pública: $PUBLIC_URL"
+  else
+    ask PUBLIC_URL "URL pública do gateway (a que seus clientes e a Meta vão chamar)" "${DEFAULT_URL:-http://localhost:3000}"
+    PUBLIC_URL="${PUBLIC_URL%/}"
+    case "$PUBLIC_URL" in
+      http://* | https://*) ;;
+      *) die "A URL pública precisa começar com http:// ou https://" ;;
+    esac
+  fi
 
   GLOBAL_KEY="$(prev GLOBAL_API_KEY)"
   case "$GLOBAL_KEY" in '' | change-me | troque-*) GLOBAL_KEY='' ;; esac
@@ -381,6 +641,8 @@ if [ "$CONFIGURE" -eq 1 ]; then
   set_env "$NEW_ENV" LOG_LEVEL info
   set_env "$NEW_ENV" GLOBAL_API_KEY "$GLOBAL_KEY"
   set_env "$NEW_ENV" PUBLIC_BASE_URL "$PUBLIC_URL"
+  # Atrás do nginx só o proxy fica exposto: os serviços ouvem em 127.0.0.1.
+  [ -n "$HTTPS_DOMAIN" ] && set_env "$NEW_ENV" BIND_ADDR 127.0.0.1
   set_env "$NEW_ENV" DB_PASSWORD "$DB_PASS"
   # Ainda não há migrations: é o synchronize que cria as tabelas no primeiro boot.
   set_env "$NEW_ENV" DB_SYNCHRONIZE true
@@ -413,12 +675,38 @@ if [ "$CONFIGURE" -eq 1 ]; then
   ok ".env gravado (permissão 600 — só o seu usuário lê)."
 fi
 
+# .env mantido, mas o domínio veio por flag (ou a URL já é https e falta o proxy).
+if [ "$CONFIGURE" -eq 0 ]; then
+  if [ -n "$HTTPS_DOMAIN" ]; then
+    https_supported || die "Não dá para configurar o HTTPS aqui: $HTTPS_WHY."
+    valid_domain "$HTTPS_DOMAIN" || die "Domínio inválido: $HTTPS_DOMAIN"
+    [ -n "$HTTPS_EMAIL" ] || ask HTTPS_EMAIL "E-mail para o Let's Encrypt"
+    valid_email "$HTTPS_EMAIL" || die "E-mail inválido: ${HTTPS_EMAIL:-vazio}"
+    if [ "$AGREE_TOS" -eq 0 ]; then
+      [ "$ASSUME_YES" -eq 1 ] && die "Com --yes, aceite os termos do Let's Encrypt explicitamente com --agree-tos."
+      info "Termos do Let's Encrypt: https://letsencrypt.org/repository/"
+      confirm "Você aceita os termos de serviço do Let's Encrypt?" n || die "Sem aceitar os termos não é possível emitir o certificado."
+    fi
+    set_env .env PUBLIC_BASE_URL "https://$HTTPS_DOMAIN"
+    set_env .env BIND_ADDR 127.0.0.1
+    ok "PUBLIC_BASE_URL e BIND_ADDR ajustados no .env para o domínio."
+  fi
+fi
+
 docker compose config --quiet 2>/dev/null || die "O docker-compose.yml não validou com este .env. Rode 'docker compose config' em $INSTALL_DIR para ver o erro."
+
+if [ -n "$HTTPS_DOMAIN" ]; then
+  setup_https "$HTTPS_DOMAIN" "$HTTPS_EMAIL" || warn "HTTPS não concluído — a instalação segue; o resumo final diz como repetir."
+fi
 
 if [ "$NO_START" -eq 1 ]; then
   step "Pronto para subir"
   info "Você pediu --no-start. Para subir depois:"
   printf '    cd %s && docker compose up -d --build\n' "$INSTALL_DIR"
+  if [ -n "$HTTPS_DOMAIN" ] && [ "$HTTPS_DONE" -eq 0 ] && [ -n "$CERTBOT_CMD" ]; then
+    info "O certificado não foi emitido. Depois de corrigir a causa, repita:"
+    printf '    %s\n' "$CERTBOT_CMD"
+  fi
   exit 0
 fi
 
@@ -482,10 +770,17 @@ PUBLIC_URL="$(get_env .env PUBLIC_BASE_URL)"
 GLOBAL_KEY="$(get_env .env GLOBAL_API_KEY)"
 
 printf '\n%s%sWAMux instalado.%s\n\n' "$BOLD" "$GREEN" "$RESET"
-printf '  Painel        http://localhost:8080\n'
-printf '  API           http://localhost:3000/api/v1\n'
-printf '  Documentação  http://localhost:3000/api/docs\n'
-[ "$PUBLIC_URL" != "http://localhost:3000" ] && printf '  URL pública   %s\n' "$PUBLIC_URL"
+if [ "$HTTPS_DONE" -eq 1 ]; then
+  printf '  Painel        %s\n' "$PUBLIC_URL"
+  printf '  API           %s/api/v1\n' "$PUBLIC_URL"
+  printf '  Documentação  %s/api/docs\n' "$PUBLIC_URL"
+  printf '  Webhook Meta  %s/api/webhooks/cloud/<id-da-instância>\n' "$PUBLIC_URL"
+else
+  printf '  Painel        http://localhost:8080\n'
+  printf '  API           http://localhost:3000/api/v1\n'
+  printf '  Documentação  http://localhost:3000/api/docs\n'
+  [ "$PUBLIC_URL" != "http://localhost:3000" ] && printf '  URL pública   %s\n' "$PUBLIC_URL"
+fi
 printf '\n  %sChave de administração (GLOBAL_API_KEY):%s\n    %s\n' "$BOLD" "$RESET" "$GLOBAL_KEY"
 info "Use-a para entrar no painel e no header 'apikey'. Ela também está em $INSTALL_DIR/.env"
 printf '\n  Comandos úteis (dentro de %s):\n' "$INSTALL_DIR"
@@ -493,11 +788,27 @@ printf '    docker compose logs -f gateway     acompanhar os logs\n'
 printf '    docker compose ps                  estado dos serviços\n'
 printf '    docker compose down                parar (os dados ficam nos volumes)\n'
 printf '    ./install.sh                       reconfigurar ou atualizar\n'
-if [ "${PUBLIC_URL#https://}" = "$PUBLIC_URL" ] && [ "$PUBLIC_URL" != "http://localhost:3000" ]; then
-  printf '\n'
-  warn "A URL pública não usa HTTPS. A Meta só entrega webhooks e Flows em HTTPS — coloque um proxy com TLS na frente."
+printf '\n'
+if [ -n "$HTTPS_DOMAIN" ] && [ "$HTTPS_DONE" -eq 0 ]; then
+  warn "O HTTPS de $HTTPS_DOMAIN não foi concluído, mas o .env já aponta para https://$HTTPS_DOMAIN."
+  if [ -n "$CERTBOT_CMD" ]; then
+    info "Corrija a causa (DNS, porta 80) e repita só a emissão:"
+    printf '    %s\n' "$CERTBOT_CMD"
+  else
+    info "Corrija a causa e rode o instalador de novo: ./install.sh --domain $HTTPS_DOMAIN --email $HTTPS_EMAIL"
+  fi
+elif [ "${PUBLIC_URL#https://}" = "$PUBLIC_URL" ] && [ "$PUBLIC_URL" != "http://localhost:3000" ]; then
+  warn "A URL pública não usa HTTPS. A Meta só entrega webhooks e Flows em HTTPS — rode ./install.sh --domain <seu-domínio> para configurar nginx + certificado."
 fi
+BIND="$(get_env .env BIND_ADDR)"
 case "$PUBLIC_URL" in
   http://localhost* | http://127.*) ;;
-  *) info "As portas 5432, 6379, 5672 e 15672 ficam abertas no host: bloqueie-as no firewall em servidores públicos." ;;
+  *)
+    if [ "$BIND" = "127.0.0.1" ]; then
+      info "Os serviços ouvem só em 127.0.0.1; apenas o nginx (80/443) fica exposto."
+    else
+      info "As portas 3000, 8080, 8081, 5432, 6379, 5672 e 15672 ficam abertas no host (o Docker ignora o ufw)."
+      info "Em servidor público, defina BIND_ADDR=127.0.0.1 no .env e use um proxy com TLS na frente."
+    fi
+    ;;
 esac

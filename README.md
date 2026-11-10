@@ -67,13 +67,54 @@ Bibliotecas diferentes, formatos de evento diferentes, sessões para gerenciar. 
 
 ## Comece em minutos
 
-Um comando baixa o projeto e conduz a instalação — confere git e Docker, pergunta as configurações, gera o `.env` com segredos fortes e sobe a stack:
+Um comando baixa o projeto e conduz a instalação:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FaelN1/wamux/main/install.sh | bash
 ```
 
-O instalador não instala nada no sistema sem perguntar e nunca sobrescreve um `.env` existente sem backup. Rode-o de novo (`./install.sh`, dentro da pasta) para reconfigurar ou atualizar. Opções: `--dir <pasta>`, `--branch <nome>`, `--yes` (sem perguntas, padrões e segredos gerados) e `--no-start` (só prepara o `.env`) — por exemplo `… | bash -s -- --dir /opt/wamux`.
+O instalador é interativo e faz, nesta ordem:
+
+1. **Confere o que já está instalado** — sistema, git, Docker, Docker Compose v2 e se o Docker está rodando. No Linux sem Docker, oferece instalá-lo pelo script oficial.
+2. **Baixa o projeto** na pasta escolhida (ou atualiza, se já existir).
+3. **Pergunta as configurações** — domínio/URL pública, chave de administração (Enter gera uma forte), Inbox, painel de Logs, Cloud API (App Secret da Meta) e webhook global.
+4. **Gera o `.env`** com senhas aleatórias para Postgres, RabbitMQ e sidecar, com permissão `600`.
+5. **Configura o HTTPS** (opcional, Linux) — instala **nginx** e **certbot**, cria o proxy reverso para o seu domínio e pede o certificado do **Let's Encrypt**, com renovação automática.
+6. **Sobe a stack** com `docker compose up -d --build`, espera a API responder e mostra os endereços e a chave de administração.
+
+Ele não instala nada no sistema sem perguntar e nunca sobrescreve um `.env` sem backup. Para reconfigurar ou atualizar, rode de novo dentro da pasta: `./install.sh`.
+
+#### HTTPS com domínio próprio
+
+Requisitos: servidor Linux (apt ou dnf) com root ou sudo, um registro **A** do domínio apontando para o servidor e as portas **80** e **443** abertas. Com isso o instalador:
+
+- publica um único domínio — `/api` e `/events` (WebSocket) vão para o gateway, o resto para o painel;
+- define `PUBLIC_BASE_URL=https://seu-dominio` e `BIND_ADDR=127.0.0.1`, de modo que só o nginx fica exposto (o Docker publica portas por fora do `ufw`, então é o bind que fecha as demais);
+- libera 80/443 no `ufw`/`firewalld`, se estiverem ativos, e pede a sua confirmação dos termos do Let's Encrypt.
+
+Se o certificado não sair (DNS ainda propagando, porta 80 bloqueada), a instalação segue e o instalador mostra o comando para repetir só a emissão. Em macOS ou sem domínio, a stack sobe em `http://localhost` normalmente — mas a Meta só entrega webhooks e Flows em HTTPS.
+
+#### Opções
+
+| Opção             | Efeito                                                            |
+| ----------------- | ----------------------------------------------------------------- |
+| `--dir <pasta>`   | Pasta de instalação (padrão: `./wamux`).                          |
+| `--branch <nome>` | Branch ou tag a instalar (padrão: `main`).                        |
+| `--domain <host>` | Domínio para o HTTPS (nginx + Let's Encrypt).                     |
+| `--email <email>` | E-mail da conta Let's Encrypt (avisos de expiração).              |
+| `--agree-tos`     | Aceita os termos do Let's Encrypt — obrigatório junto de `--yes`. |
+| `--yes`           | Sem perguntas: usa os padrões e gera os segredos.                 |
+| `--no-start`      | Prepara tudo (`.env`, HTTPS), mas não sobe os containers.         |
+
+Para passar opções pelo comando de uma linha, use `bash -s --`:
+
+```bash
+# servidor novo, sem perguntas, já com HTTPS
+curl -fsSL https://raw.githubusercontent.com/FaelN1/wamux/main/install.sh | bash -s -- \
+  --yes --dir /opt/wamux --domain wamux.suaempresa.com --email voce@suaempresa.com --agree-tos
+```
+
+Vale saber: a primeira subida constrói três imagens (5 a 15 minutos); as portas do host são fixas (o instalador avisa quando alguma está ocupada); e, se já existir um volume de banco de uma instalação anterior, ele avisa antes de gerar uma senha nova que não bateria com esse volume.
 
 <details>
 <summary><b>Instalação manual</b></summary>

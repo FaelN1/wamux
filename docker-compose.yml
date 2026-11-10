@@ -1,5 +1,9 @@
 name: wamux
 
+# BIND_ADDR: interface em que as portas são publicadas no host. Padrão 0.0.0.0
+# (todas). Atrás de um proxy reverso (nginx + TLS), use 127.0.0.1 — o Docker
+# publica portas por fora do ufw, então só o bind as mantém fechadas.
+
 services:
   gateway:
     # Puxa a imagem publicada por padrão; `docker compose build` builda local.
@@ -10,9 +14,15 @@ services:
     container_name: wamux-gateway
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - '${BIND_ADDR:-0.0.0.0}:3000:3000'
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -47,7 +57,7 @@ services:
     container_name: wamux-web
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - '${BIND_ADDR:-0.0.0.0}:8080:80'
     depends_on:
       - gateway
     networks:
@@ -60,7 +70,7 @@ services:
     container_name: wamux-whatsmeow
     restart: unless-stopped
     environment:
-      APP_PORT: "3000"
+      APP_PORT: '3000'
       APP_ENV: production
       DATABASE_URL: postgres://${DB_USER:-whatsapp}:${DB_PASSWORD:-whatsapp}@postgres:5432/${WHATSMEOW_DB_NAME:-wamux}?sslmode=disable
       MASTER_API_KEY: ${WHATSMEOW_MASTER_KEY:-troque-esta-master-key-do-go}
@@ -73,7 +83,7 @@ services:
       - whatsmeow_sessions:/app/sessions
       - whatsmeow_logs:/app/logs
     ports:
-      - "8081:3000" # docs da API do serviço Go: http://localhost:8081/docs
+      - '${BIND_ADDR:-0.0.0.0}:8081:3000' # docs da API do serviço Go: http://localhost:8081/docs
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,9 +103,9 @@ services:
       # cria o banco separado do serviço Go no primeiro boot
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
+      - '${BIND_ADDR:-0.0.0.0}:5432:5432'
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-whatsapp}"]
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-whatsapp}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -110,9 +120,9 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "6379:6379"
+      - '${BIND_ADDR:-0.0.0.0}:6379:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -130,10 +140,10 @@ services:
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
     ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # UI de gestão: http://localhost:15672
+      - '${BIND_ADDR:-0.0.0.0}:5672:5672' # AMQP
+      - '${BIND_ADDR:-0.0.0.0}:15672:15672' # UI de gestão: http://localhost:15672
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
       interval: 10s
       timeout: 5s
       retries: 10
