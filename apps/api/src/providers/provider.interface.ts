@@ -132,6 +132,31 @@ export interface QrPayload {
   expiresAt?: number;
 }
 
+/**
+ * Cache chave-valor (string → string) com TTL, agnóstico de engine e JÁ
+ * namespaced por instância por quem monta o contexto (`ProviderFactory`): o
+ * adapter usa chaves curtas (`sent:<id>`) e nunca enxerga as de outra
+ * instância. Serve para estado efêmero que precisa atravessar restart do
+ * processo/migração de worker sem virar tabela (ex.: o store de retry do
+ * Baileys). Não é fonte de verdade: tudo aqui pode sumir a qualquer momento.
+ *
+ * As operações PODEM rejeitar (backend fora do ar) — quem usa trata a falha
+ * como miss e segue; uma falha de cache nunca pode derrubar um envio.
+ */
+export interface ProviderCache {
+  /** `null` = não existe (ou já expirou). */
+  get(key: string): Promise<string | null>;
+  /** Grava com validade em segundos (`ttlSec` > 0). */
+  set(key: string, value: string, ttlSec: number): Promise<void>;
+  del(key: string): Promise<void>;
+  /**
+   * Remove as chaves DESTA instância que começam com `prefix` (sem prefixo =
+   * todas). Usado no logout, quando o que está em cache pertence a uma sessão
+   * descartada.
+   */
+  clear(prefix?: string): Promise<void>;
+}
+
 /** Dados injetados na construção de um provider. */
 export interface ProviderContext {
   instanceId: string;
@@ -146,6 +171,11 @@ export interface ProviderContext {
   identity?: IdentityResolver;
   /** política de exposição do remoteJid. Default 'auto'. */
   identityMode?: IdentityMode;
+  /**
+   * Cache efêmero compartilhado entre workers (Redis), já namespaced por
+   * instância. Opcional: sem ele o adapter funciona só com memória.
+   */
+  cache?: ProviderCache;
 }
 
 /**
@@ -505,6 +535,8 @@ export abstract class BaseProvider extends EventEmitter implements WhatsAppProvi
   /** resolução LID↔PN — opcional até o IdentityModule ser plugado. */
   protected readonly identity?: IdentityResolver;
   protected readonly identityMode: IdentityMode;
+  /** cache efêmero entre workers, já namespaced por instância (opcional). */
+  protected readonly cache?: ProviderCache;
 
   constructor(ctx: ProviderContext) {
     super();
@@ -515,6 +547,7 @@ export abstract class BaseProvider extends EventEmitter implements WhatsAppProvi
     this.logger = ctx.logger;
     this.identity = ctx.identity;
     this.identityMode = ctx.identityMode ?? 'auto';
+    this.cache = ctx.cache;
   }
 
   abstract initialize(): Promise<void>;

@@ -4,6 +4,7 @@ import { ProxyAgent } from 'proxy-agent';
 import type {
   AnyMessageContent,
   BinaryNode,
+  CacheStore,
   GroupMetadata,
   WAMessage,
   WAMessageKey,
@@ -63,7 +64,7 @@ import {
 } from '../provider.types';
 import { exportBaileysCreds, importBaileysCreds, usePostgresAuthState } from './baileys-auth-state';
 import { loadBaileys, resolveWaWebVersion, type BaileysModule } from './baileys-runtime';
-import { MapCacheStore, SentMessageStore, TtlLruCache } from './baileys-caches';
+import { MapCacheStore, RetryCounterStore, SentMessageStore, TtlLruCache } from './baileys-caches';
 import { mapBaileysContent } from './baileys-normalize';
 
 /** Contador de retries por mensagem: mesmo TTL do default do Baileys (1h). */
@@ -154,15 +155,37 @@ export class BaileysProvider extends BaseProvider {
   // ── plumbing de retry/sessão ──────────────────────────────
   // Estes três vivem na INSTÂNCIA do provider (não no socket): o manager chama
   // `initialize()` de novo a cada reconexão e o estado precisa atravessar isso.
-  // Tudo em memória — some num restart do processo (ver baileys-caches.ts).
+  // O store de retry e o contador têm ainda um 2º nível no `ProviderCache`
+  // (Redis), que atravessa restart do processo e migração de worker — ver
+  // baileys-caches.ts. Sem `cache` no contexto, ou com TTL 0, é só memória.
+
+  /** Segundos de retenção do conteúdo enviado no Redis (0 = não persiste). */
+  private readonly retryCacheTtlSec = this.cache
+    ? Math.max(0, Math.floor(Number(this.config.baileysRetryCacheTtlSec ?? 0)) || 0)
+    : 0;
+  /** Último aviso de falha do cache — evita inundar o log com o Redis fora. */
+  private lastCacheWarnAt = 0;
 
   /** Conteúdo do que enviamos, para responder aos pedidos de retry (`getMessage`). */
-  private readonly sentMessages = new SentMessageStore();
-  /** Quantas vezes cada mensagem já foi re-tentada — evita loop de retry após reconectar. */
-  private readonly msgRetryCounterCache = new MapCacheStore({
-    ttlMs: MSG_RETRY_TTL_MS,
-    maxEntries: 10_000,
+  private readonly sentMessages = new SentMessageStore({
+    cache: this.cache,
+    ttlSec: this.retryCacheTtlSec,
+    // `B` só existe após `initialize()` — e nada é enviado antes disso.
+    codec: () => this.B?.proto?.Message,
+    onError: (op, err) => this.onCacheError('sent', op, err),
   });
+  /** Quantas vezes cada mensagem já foi re-tentada — evita loop de retry após reconectar. */
+  private readonly msgRetryCounterCache: CacheStore =
+    this.retryCacheTtlSec > 0
+      ? new RetryCounterStore({
+          ttlMs: MSG_RETRY_TTL_MS,
+          maxEntries: 10_000,
+          cache: this.cache,
+          // O contador não carrega conteúdo: vale o TTL dele (1h), limitado ao configurado.
+          ttlSec: Math.min(MSG_RETRY_TTL_MS / 1000, this.retryCacheTtlSec),
+          onError: (op, err) => this.onCacheError('retry', op, err),
+        })
+      : new MapCacheStore({ ttlMs: MSG_RETRY_TTL_MS, maxEntries: 10_000 });
   /** Metadados de grupo p/ o envio; invalidado por evento de grupo (ver registerHandlers). */
   private readonly groupMetadataCache = new TtlLruCache<GroupMetadata>({
     ttlMs: GROUP_METADATA_TTL_MS,
@@ -175,6 +198,20 @@ export class BaileysProvider extends BaseProvider {
     super(ctx);
     // Baileys exige um logger estilo pino; silenciamos o ruído interno dele.
     this.waLogger = pino({ level: 'silent' });
+  }
+
+  /** Falha do cache de retry (Redis): nunca derruba nada, só registra (1 aviso/min). */
+  private onCacheError(store: string, op: string, err: unknown): void {
+    const detail = `[${this.instanceId}] cache de retry (${store}.${op}) falhou: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    const now = Date.now();
+    if (now - this.lastCacheWarnAt >= 60_000) {
+      this.lastCacheWarnAt = now;
+      this.logger.warn(`${detail} — seguindo só com memória`);
+    } else {
+      this.logger.debug(detail);
+    }
   }
 
   private resetInit(): void {
@@ -224,8 +261,9 @@ export class BaileysProvider extends BaseProvider {
       auth: { creds: state.creds, keys },
       logger: this.waLogger,
       // Retry de descriptografia: o destinatário pede o reenvio e o Baileys
-      // precisa do conteúdo original. Miss → `undefined` (nunca mensagem vazia).
-      getMessage: async (key: WAMessageKey) => this.sentMessages.get(key.id),
+      // precisa do conteúdo original (memória e, num miss, Redis). Miss ou erro
+      // → `undefined` (nunca mensagem vazia); `fetch` não rejeita.
+      getMessage: (key: WAMessageKey) => this.sentMessages.fetch(key.id),
       msgRetryCounterCache: this.msgRetryCounterCache,
       cachedGroupMetadata: (jid: string) => this.cachedGroupMetadata(jid),
       browser: [client, browser, '1.0'],

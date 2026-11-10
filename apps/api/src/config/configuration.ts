@@ -2,6 +2,15 @@
  * Configuração central lida de variáveis de ambiente (.env).
  * Consumida via ConfigService em toda a aplicação.
  */
+
+/** TTL (s) do cache de retry do Baileys: inteiro ≥ 0; ausente/inválido → 24h. */
+function parseRetryCacheTtl(raw: string | undefined): number {
+  const fallback = 86_400;
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
 export default () => ({
   env: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '3000', 10),
@@ -71,6 +80,14 @@ export default () => ({
   device: {
     client: process.env.SESSION_PHONE_CLIENT ?? 'WAMux',
     browser: process.env.SESSION_PHONE_NAME ?? 'Chrome',
+  },
+
+  baileys: {
+    // Por quantos segundos o conteúdo das mensagens ENVIADAS fica no Redis para
+    // responder a pedidos de retry ("Aguardando mensagem") depois de um restart
+    // ou de a instância migrar de worker. 0 = não persiste (só memória do
+    // processo). Valor inválido/negativo cai no default de 24h.
+    retryCacheTtlSec: parseRetryCacheTtl(process.env.BAILEYS_RETRY_CACHE_TTL_SEC),
   },
 
   whatsmeow: {

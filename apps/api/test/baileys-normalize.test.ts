@@ -6,11 +6,12 @@ import { BaileysProvider } from '../src/providers/baileys/baileys.provider';
 import { loadBaileys, type BaileysModule } from '../src/providers/baileys/baileys-runtime';
 import {
   MapCacheStore,
+  RetryCounterStore,
   SentMessageStore,
   TtlLruCache,
 } from '../src/providers/baileys/baileys-caches';
 import { mapBaileysContent, vcardPhones } from '../src/providers/baileys/baileys-normalize';
-import { memoryCtx } from './helpers';
+import { memoryCache, memoryCtx } from './helpers';
 
 /**
  * Normalização de mensagens RECEBIDAS pelo adapter Baileys e os caches de
@@ -466,6 +467,321 @@ describe('baileys: SentMessageStore (getMessage do retry)', () => {
 
     await p.deleteMessage({ chatId: CHAT, messageId: 'SENT1' });
     assert.equal(priv.sentMessages.get('SENT1'), undefined);
+  });
+});
+
+describe('baileys: SentMessageStore com L2 (ProviderCache)', () => {
+  /** Deixa as escritas disparadas sem await (write-through) assentarem. */
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const codec = () => B.proto.Message;
+
+  /** Mensagem com campos binários e Long — o que um JSON não preservaria. */
+  const imageMessage = (): proto.IMessage => ({
+    imageMessage: {
+      url: 'https://mmg.whatsapp.net/v/t62/abc.enc',
+      mimetype: 'image/jpeg',
+      caption: 'foto',
+      mediaKey: Buffer.from(
+        '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f',
+        'hex',
+      ),
+      fileSha256: Buffer.alloc(32, 0xab),
+      fileEncSha256: Buffer.alloc(32, 0xcd),
+      fileLength: 123_456,
+      jpegThumbnail: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+    },
+  });
+
+  it('sobrevive a um "restart": outro store, mesmo cache, Buffers intactos', async () => {
+    const cache = memoryCache();
+    const original = imageMessage();
+    const before = new SentMessageStore({ cache, ttlSec: 3600, codec });
+    before.remember('IMG1', original);
+    await settle();
+
+    assert.equal(cache.ttls.get('sent:IMG1'), 3600);
+    const raw = cache.data.get('sent:IMG1');
+    assert.ok(raw);
+    // protobuf em base64 — não JSON.
+    assert.match(raw, /^[A-Za-z0-9+/]+=*$/);
+
+    const after = new SentMessageStore({ cache, ttlSec: 3600, codec }); // processo novo
+    assert.equal(after.get('IMG1'), undefined); // L1 vazio
+    const restored = await after.fetch('IMG1');
+    assert.ok(restored?.imageMessage);
+    const img = restored.imageMessage;
+    const src = original.imageMessage!;
+    assert.ok(img.mediaKey instanceof Uint8Array);
+    assert.deepEqual(Buffer.from(img.mediaKey), src.mediaKey);
+    assert.deepEqual(Buffer.from(img.fileSha256!), src.fileSha256);
+    assert.deepEqual(Buffer.from(img.fileEncSha256!), src.fileEncSha256);
+    assert.deepEqual(Buffer.from(img.jpegThumbnail!), src.jpegThumbnail);
+    assert.equal(Number(img.fileLength), 123_456);
+    assert.equal(img.caption, 'foto');
+    assert.equal(img.url, src.url);
+    // Reencodar o que voltou dá os mesmos bytes do original.
+    assert.deepEqual(
+      Buffer.from(B.proto.Message.encode(restored).finish()),
+      Buffer.from(B.proto.Message.encode(original).finish()),
+    );
+    // O hit de L2 aquece o L1.
+    assert.equal(after.get('IMG1'), restored);
+  });
+
+  it('miss nos dois níveis devolve undefined', async () => {
+    const store = new SentMessageStore({ cache: memoryCache(), ttlSec: 60, codec });
+    assert.equal(await store.fetch('NAO-EXISTE'), undefined);
+    assert.equal(await store.fetch(undefined), undefined);
+    assert.equal(await store.fetch(null), undefined);
+  });
+
+  it('forget apaga também do L2 (mesmo sem estar no L1)', async () => {
+    const cache = memoryCache();
+    const a = new SentMessageStore({ cache, ttlSec: 60, codec });
+    a.remember('A1', { conversation: 'oi' });
+    a.remember('A2', { conversation: 'fica' });
+    await settle();
+    assert.ok(cache.data.has('sent:A1'));
+
+    const b = new SentMessageStore({ cache, ttlSec: 60, codec }); // após restart
+    b.forget('A1');
+    await settle();
+    assert.equal(cache.data.has('sent:A1'), false);
+    assert.equal(await b.fetch('A1'), undefined);
+    assert.equal(await a.fetch('A1'), a.get('A1')); // `a` ainda tem no L1 dele…
+    a.forget('A1');
+    assert.equal(await a.fetch('A1'), undefined); // …até esquecer também
+    assert.equal((await b.fetch('A2'))?.conversation, 'fica');
+  });
+
+  it('remember seguido de forget não deixa resíduo no L2', async () => {
+    const cache = memoryCache();
+    const store = new SentMessageStore({ cache, ttlSec: 60, codec });
+    store.remember('A1', { conversation: 'oi' });
+    store.forget('A1'); // sem esperar a escrita assentar
+    await settle();
+    assert.equal(cache.data.has('sent:A1'), false);
+    assert.equal(await store.fetch('A1'), undefined);
+  });
+
+  it('clear esvazia só o prefixo do store no L2', async () => {
+    const cache = memoryCache();
+    cache.data.set('retry:X', '2');
+    const store = new SentMessageStore({ cache, ttlSec: 60, codec });
+    store.remember('A1', { conversation: 'oi' });
+    await settle();
+    store.clear();
+    await settle();
+    assert.deepEqual([...cache.data.keys()], ['retry:X']);
+    assert.equal(await store.fetch('A1'), undefined);
+  });
+
+  it('cache.get rejeitando → undefined, sem exceção, e o erro é reportado', async () => {
+    const cache = memoryCache();
+    const errors: string[] = [];
+    const store = new SentMessageStore({
+      cache,
+      ttlSec: 60,
+      codec,
+      onError: (op) => errors.push(op),
+    });
+    cache.failing = true;
+    assert.equal(await store.fetch('A1'), undefined);
+    assert.deepEqual(errors, ['get']);
+  });
+
+  it('cache.set/del rejeitando (ou lançando) não quebra o envio; L1 continua servindo', async () => {
+    const cache = memoryCache();
+    cache.failing = true;
+    const errors: string[] = [];
+    const store = new SentMessageStore({
+      cache,
+      ttlSec: 60,
+      codec,
+      onError: (op) => errors.push(op),
+    });
+    const content = { conversation: 'oi' };
+    assert.doesNotThrow(() => store.remember('A1', content));
+    assert.equal(await store.fetch('A1'), content);
+    assert.doesNotThrow(() => store.forget('A1'));
+    await settle();
+    assert.deepEqual(errors, ['set', 'del']);
+
+    const sync = new SentMessageStore({
+      cache: {
+        get: () => {
+          throw new Error('síncrono');
+        },
+        set: () => {
+          throw new Error('síncrono');
+        },
+        del: () => {
+          throw new Error('síncrono');
+        },
+        clear: () => {
+          throw new Error('síncrono');
+        },
+      },
+      ttlSec: 60,
+      codec,
+    });
+    assert.doesNotThrow(() => sync.remember('B1', content));
+    assert.doesNotThrow(() => sync.forget('B1'));
+    assert.doesNotThrow(() => sync.clear());
+    assert.equal(await sync.fetch('B1'), undefined);
+  });
+
+  it('leitura de L2 que não responde estoura o timeout e vira miss', async () => {
+    const cache = memoryCache();
+    cache.get = () => new Promise<string | null>(() => undefined); // nunca resolve
+    const store = new SentMessageStore({ cache, ttlSec: 60, codec, readTimeoutMs: 10 });
+    assert.equal(await store.fetch('A1'), undefined);
+  });
+
+  it('payload ilegível ou vazio no L2 → undefined (nunca mensagem vazia)', async () => {
+    const cache = memoryCache();
+    cache.data.set('sent:LIXO', Buffer.from([0xff, 0xff, 0xff, 0xff, 0x01]).toString('base64'));
+    cache.data.set('sent:VAZIO', '');
+    cache.data.set(
+      'sent:NADA',
+      Buffer.from(B.proto.Message.encode({}).finish()).toString('base64'),
+    );
+    const store = new SentMessageStore({ cache, ttlSec: 60, codec });
+    assert.equal(await store.fetch('LIXO'), undefined);
+    assert.equal(await store.fetch('VAZIO'), undefined);
+    assert.equal(await store.fetch('NADA'), undefined);
+  });
+
+  it('TTL 0 → nada é escrito nem lido do L2 (só memória)', async () => {
+    const cache = memoryCache();
+    cache.data.set(
+      'sent:PRE',
+      Buffer.from(B.proto.Message.encode({ conversation: 'x' }).finish()).toString('base64'),
+    );
+    const store = new SentMessageStore({ cache, ttlSec: 0, codec });
+    const content = { conversation: 'oi' };
+    store.remember('A1', content);
+    await settle();
+    assert.equal(cache.data.has('sent:A1'), false);
+    assert.equal(await store.fetch('A1'), content);
+    assert.equal(await store.fetch('PRE'), undefined);
+    store.forget('A1');
+    store.clear();
+    await settle();
+    assert.equal(cache.data.has('sent:PRE'), true);
+  });
+
+  it('sem codec (lib ainda não carregada) fica só em memória', async () => {
+    const cache = memoryCache();
+    const store = new SentMessageStore({ cache, ttlSec: 60, codec: () => undefined });
+    const content = { conversation: 'oi' };
+    store.remember('A1', content);
+    await settle();
+    assert.equal(cache.data.size, 0);
+    assert.equal(await store.fetch('A1'), content);
+    assert.equal(await store.fetch('OUTRA'), undefined);
+  });
+
+  it('o provider persiste via ctx.cache e um provider novo responde ao getMessage', async () => {
+    const cache = memoryCache();
+    const ctx = () => ({
+      ...memoryCtx('t-baileys-l2', { baileysRetryCacheTtlSec: 120 }),
+      cache,
+    });
+    type Priv = { sock: unknown; B: BaileysModule; sentMessages: SentMessageStore };
+    const first = new BaileysProvider(ctx());
+    const p1 = first as unknown as Priv;
+    p1.B = B;
+    const content = imageMessage();
+    p1.sock = {
+      sendMessage: async (_jid: string, c: { delete?: unknown }) =>
+        c.delete
+          ? { key: { id: 'REVOKE2' }, message: { protocolMessage: { type: 0 } } }
+          : { key: { id: 'SENT2' }, message: content },
+    };
+    await first.sendText({ to: '5511999990000', text: 'x' });
+    await settle();
+    assert.equal(cache.ttls.get('sent:SENT2'), 120);
+
+    const second = new BaileysProvider(ctx()); // "outro worker"
+    const p2 = second as unknown as Priv;
+    p2.B = B;
+    p2.sock = p1.sock;
+    const restored = await p2.sentMessages.fetch('SENT2');
+    assert.deepEqual(
+      Buffer.from(restored!.imageMessage!.mediaKey!),
+      content.imageMessage!.mediaKey,
+    );
+
+    await second.deleteMessage({ chatId: CHAT, messageId: 'SENT2' });
+    await settle();
+    assert.equal(cache.data.has('sent:SENT2'), false);
+  });
+
+  it('o provider com TTL 0 (ou sem config) não escreve no cache', async () => {
+    for (const config of [{ baileysRetryCacheTtlSec: 0 }, {}]) {
+      const cache = memoryCache();
+      const p = new BaileysProvider({ ...memoryCtx('t-baileys-l2-off', config), cache });
+      const priv = p as unknown as { sock: unknown; B: BaileysModule };
+      priv.B = B;
+      priv.sock = {
+        sendMessage: async () => ({ key: { id: 'SENT3' }, message: { conversation: 'x' } }),
+      };
+      await p.sendText({ to: '5511999990000', text: 'x' });
+      await settle();
+      assert.equal(cache.data.size, 0);
+    }
+  });
+});
+
+describe('baileys: RetryCounterStore (contador de retry com L2)', () => {
+  const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+  const opts = { ttlMs: 60_000, maxEntries: 10 };
+
+  it('o contador atravessa um "restart" e o del/flushAll limpam o L2', async () => {
+    const cache = memoryCache();
+    const a = new RetryCounterStore({ ...opts, cache, ttlSec: 3600 });
+    a.set('MSG:5511@s.whatsapp.net', 3);
+    a.set('OUTRA:x', 1);
+    await settle();
+    assert.equal(cache.data.get('retry:MSG:5511@s.whatsapp.net'), '3');
+    assert.equal(cache.ttls.get('retry:MSG:5511@s.whatsapp.net'), 3600);
+
+    const b = new RetryCounterStore({ ...opts, cache, ttlSec: 3600 });
+    assert.equal(await b.get<number>('MSG:5511@s.whatsapp.net'), 3);
+    assert.equal(await b.get<number>('NAO-EXISTE'), undefined);
+    b.del('MSG:5511@s.whatsapp.net');
+    await settle();
+    assert.equal(cache.data.has('retry:MSG:5511@s.whatsapp.net'), false);
+
+    cache.data.set('sent:FICA', 'x');
+    b.flushAll();
+    await settle();
+    assert.deepEqual([...cache.data.keys()], ['sent:FICA']);
+  });
+
+  it('Redis fora → conta só em memória, sem exceção', async () => {
+    const cache = memoryCache();
+    cache.failing = true;
+    const store = new RetryCounterStore({ ...opts, cache, ttlSec: 3600 });
+    assert.equal(await store.get<number>('K'), undefined);
+    assert.doesNotThrow(() => store.set('K', 2));
+    assert.equal(await store.get<number>('K'), 2);
+    assert.doesNotThrow(() => store.del('K'));
+    assert.doesNotThrow(() => store.flushAll());
+    await settle();
+  });
+
+  it('sem cache ou com TTL 0 não toca no L2', async () => {
+    const cache = memoryCache();
+    const store = new RetryCounterStore({ ...opts, cache, ttlSec: 0 });
+    store.set('K', 1);
+    await settle();
+    assert.equal(cache.data.size, 0);
+    assert.equal(await store.get<number>('K'), 1);
+    const bare = new RetryCounterStore(opts);
+    bare.set('K', 4);
+    assert.equal(await bare.get<number>('K'), 4);
   });
 });
 

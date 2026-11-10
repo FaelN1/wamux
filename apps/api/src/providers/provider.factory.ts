@@ -7,6 +7,7 @@ import { IdentityMode, ProviderType, SessionStore } from './provider.types';
 import { BaileysProvider } from './baileys/baileys.provider';
 import { CloudApiProvider } from './cloud/cloud-api.provider';
 import { WhatsmeowProvider } from './whatsmeow/whatsmeow.provider';
+import { ProviderCacheService } from './provider-cache.service';
 
 /**
  * Instancia o adapter correto para o tipo de provider escolhido na criação
@@ -19,6 +20,7 @@ export class ProviderFactory {
     private readonly config: ConfigService,
     private readonly settings: SettingsService,
     private readonly identity: IdentityService,
+    private readonly cache: ProviderCacheService,
   ) {}
 
   create(type: ProviderType, ctx: ProviderContext): WhatsAppProvider {
@@ -47,6 +49,7 @@ export class ProviderFactory {
   ): ProviderContext {
     const cloudApi = this.config.get<Record<string, string>>('cloudApi') ?? {};
     const whatsmeow = this.config.get<Record<string, unknown>>('whatsmeow') ?? {};
+    const baileys = this.config.get<Record<string, unknown>>('baileys') ?? {};
     const device = this.settings.get().device;
 
     const config: Record<string, unknown> = {
@@ -58,6 +61,9 @@ export class ProviderFactory {
       whatsmeowMasterKey: whatsmeow.masterKey,
       whatsmeowCallbackBaseUrl: whatsmeow.callbackBaseUrl,
       whatsmeowRequireSignature: whatsmeow.requireSignature !== false,
+      // Por quanto tempo o conteúdo enviado fica no Redis p/ responder retries
+      // (0 = não persiste; só memória).
+      baileysRetryCacheTtlSec: baileys.retryCacheTtlSec,
       // Identidade no WhatsApp ("Aparelhos conectados") — lida a cada spawn,
       // então mudanças no painel valem no próximo connect.
       deviceClient: device.client,
@@ -72,6 +78,7 @@ export class ProviderFactory {
       logger: new Logger(`provider:${instanceId}`),
       identity: this.identity,
       identityMode,
+      cache: this.cache.forInstance(instanceId),
     };
   }
 }
