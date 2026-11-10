@@ -478,6 +478,8 @@ export interface WhatsAppProvider {
   updateFlowMetadata?(id: string, input: UpdateFlowMetadataInput): Promise<void>;
   /** Assets do Flow (o Flow JSON vigente, com URL temporária de download). */
   listFlowAssets?(id: string): Promise<FlowAsset[]>;
+  /** Conteúdo do Flow JSON vigente (baixado pelo adapter — a URL do asset é temporária). */
+  getFlowJson?(id: string): Promise<string | null>;
   /** Estado da chave pública registrada para o número + se há chave privada local. */
   getFlowEncryption?(): Promise<FlowEncryptionInfo>;
   /** Gera/importa o par de chaves e registra a pública na Meta. */

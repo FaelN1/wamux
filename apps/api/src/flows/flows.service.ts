@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  BadGatewayException,
   BadRequestException,
   Injectable,
   Logger,
@@ -71,6 +72,15 @@ export class FlowsService {
   }
   async assets(id: string, flowId: string): Promise<FlowAsset[]> {
     return (await this.cap(id)).listFlowAssets!(flowId);
+  }
+  async json(id: string, flowId: string): Promise<{ flowJson: string | null }> {
+    try {
+      return { flowJson: await (await this.cap(id)).getFlowJson!(flowId) };
+    } catch (e) {
+      if (e instanceof ProviderRequestError) throw e;
+      // falha ao baixar do CDN (URL expirada, rede) — não é erro do cliente nem 500 nosso.
+      throw new BadGatewayException(`Não foi possível baixar o Flow JSON: ${(e as Error).message}`);
+    }
   }
   async publish(id: string, flowId: string): Promise<void> {
     return (await this.cap(id)).publishFlow!(flowId);

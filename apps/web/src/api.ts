@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   PROVIDERS,
   WEBHOOK_EVENTS,
@@ -27,6 +27,18 @@ import {
   type MessageTemplate,
   type CreateTemplateInput,
   type SendTemplateInput,
+  type Flow,
+  type FlowAsset,
+  type FlowCategory,
+  type FlowEncryptionInfo,
+  type FlowSession,
+  type FlowSessionStatus,
+  type FlowStatus,
+  type CreateFlowInput,
+  type CreateFlowResult,
+  type SendFlowInput,
+  type SetFlowEncryptionInput,
+  type UpdateFlowMetadataInput,
 } from '@wamux/shared';
 
 // API versionada: rotas de negócio em /api/v1; health/webhooks são
@@ -97,6 +109,22 @@ export async function rawRequest(
   }
 }
 
+/**
+ * Erro de uma chamada à API. Continua sendo um `Error` (a `message` é a mesma de
+ * sempre), mas carrega o status HTTP e o `error.code` do upstream (ex.: código da
+ * Graph API da Meta) para as telas que querem mostrá-los.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string | number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(BASE + path, {
     ...options,
@@ -110,7 +138,12 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const msg = data?.error?.message ?? data?.message ?? `HTTP ${res.status}`;
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    const code = data?.error?.code;
+    throw new ApiError(
+      typeof msg === 'string' ? msg : JSON.stringify(msg),
+      res.status,
+      typeof code === 'string' || typeof code === 'number' ? code : undefined,
+    );
   }
   return data as T;
 }
@@ -370,6 +403,241 @@ export function useSendTemplate(instanceId: string) {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+  });
+}
+
+// ── WhatsApp Flows (Cloud API) ───────────────────────────
+export type {
+  Flow,
+  FlowAsset,
+  FlowCategory,
+  FlowEncryptionInfo,
+  FlowSession,
+  FlowSessionStatus,
+  FlowStatus,
+  CreateFlowResult,
+};
+
+export interface FlowEndpointConfig {
+  /** serviço do integrador (recebe o payload já decifrado). */
+  url: string | null;
+  /** URL do gateway a registrar como `endpoint_uri` do Flow; null sem PUBLIC_BASE_URL. */
+  endpointUri: string | null;
+}
+
+export interface FlowValidationResult {
+  validation_errors: unknown[];
+}
+
+export interface SendFlowResult {
+  id?: string;
+  to?: string;
+  status?: string;
+  flowToken?: string;
+}
+
+const flowsPath = (instanceId: string) => `/instances/${instanceId}/flows`;
+
+/** `enabled` separado do id: a tela só consulta quando a instância é `cloud`. */
+export function useFlows(instanceId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['flows', instanceId],
+    enabled: !!instanceId && enabled,
+    retry: false,
+    queryFn: () => req<Flow[]>(flowsPath(instanceId ?? '')),
+  });
+}
+
+export function useFlow(instanceId: string, flowId: string | null) {
+  return useQuery({
+    queryKey: ['flow', instanceId, flowId],
+    enabled: !!instanceId && !!flowId,
+    retry: false,
+    queryFn: () => req<Flow>(`${flowsPath(instanceId)}/${flowId}`),
+  });
+}
+
+export function useFlowAssets(instanceId: string, flowId: string | null) {
+  return useQuery({
+    queryKey: ['flow-assets', instanceId, flowId],
+    enabled: !!instanceId && !!flowId,
+    retry: false,
+    queryFn: () => req<FlowAsset[]>(`${flowsPath(instanceId)}/${flowId}/assets`),
+  });
+}
+
+/**
+ * Conteúdo do Flow JSON vigente, baixado PELO GATEWAY (`GET :flowId/json`) — a
+ * `download_url` do asset é temporária e o CDN da Meta não garante CORS. Se a
+ * query falhar, a tela cai no editor vazio + link de download.
+ */
+export function useFlowJsonDownload(instanceId: string, flowId: string | null) {
+  return useQuery({
+    queryKey: ['flow-json', instanceId, flowId],
+    enabled: !!instanceId && !!flowId,
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: async () =>
+      (await req<{ flowJson: string | null }>(`${flowsPath(instanceId)}/${flowId}/json`))
+        .flowJson ?? '',
+  });
+}
+
+export function useCreateFlow(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CreateFlowInput) =>
+      req<CreateFlowResult>(flowsPath(instanceId), { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['flows', instanceId] }),
+  });
+}
+
+export function useUpdateFlowMetadata(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ flowId, patch }: { flowId: string; patch: UpdateFlowMetadataInput }) =>
+      req(`${flowsPath(instanceId)}/${flowId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+    onSuccess: (_data, { flowId }) => {
+      void qc.invalidateQueries({ queryKey: ['flows', instanceId] });
+      void qc.invalidateQueries({ queryKey: ['flow', instanceId, flowId] });
+    },
+  });
+}
+
+export function useUpdateFlowJson(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ flowId, flowJson }: { flowId: string; flowJson: string }) =>
+      req<FlowValidationResult>(`${flowsPath(instanceId)}/${flowId}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({ flowJson }),
+      }),
+    // validation_errors, versões e preview mudam junto com o JSON. Os assets NÃO
+    // são invalidados de propósito: recarregar o JSON por cima do editor aberto
+    // trocaria o texto que o usuário acabou de salvar pelo que a Meta reformatou.
+    onSuccess: (_data, { flowId }) => {
+      void qc.invalidateQueries({ queryKey: ['flows', instanceId] });
+      void qc.invalidateQueries({ queryKey: ['flow', instanceId, flowId] });
+    },
+  });
+}
+
+/** publish / deprecate / delete: mesma forma (`flowId` → ok) e mesma invalidação. */
+function useFlowLifecycle(instanceId: string, run: (flowId: string) => Promise<unknown>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: run,
+    onSuccess: (_data, flowId) => {
+      void qc.invalidateQueries({ queryKey: ['flows', instanceId] });
+      void qc.invalidateQueries({ queryKey: ['flow', instanceId, flowId] });
+    },
+  });
+}
+
+export function usePublishFlow(instanceId: string) {
+  return useFlowLifecycle(instanceId, (flowId) =>
+    req(`${flowsPath(instanceId)}/${flowId}/publish`, { method: 'POST' }),
+  );
+}
+
+export function useDeprecateFlow(instanceId: string) {
+  return useFlowLifecycle(instanceId, (flowId) =>
+    req(`${flowsPath(instanceId)}/${flowId}/deprecate`, { method: 'POST' }),
+  );
+}
+
+export function useDeleteFlow(instanceId: string) {
+  return useFlowLifecycle(instanceId, (flowId) =>
+    req(`${flowsPath(instanceId)}/${flowId}`, { method: 'DELETE' }),
+  );
+}
+
+export function useSendFlow(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SendFlowInput) =>
+      req<SendFlowResult>(`${flowsPath(instanceId)}/send`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    // cada envio abre uma sessão — a aba Execuções precisa enxergá-la.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['flow-sessions', instanceId] }),
+  });
+}
+
+export function useFlowEncryption(instanceId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['flow-encryption', instanceId],
+    enabled: !!instanceId && enabled,
+    retry: false,
+    queryFn: () => req<FlowEncryptionInfo>(`${flowsPath(instanceId ?? '')}/encryption`),
+  });
+}
+
+export function useSetFlowEncryption(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SetFlowEncryptionInput) =>
+      req<FlowEncryptionInfo>(`${flowsPath(instanceId)}/encryption`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (data) => qc.setQueryData(['flow-encryption', instanceId], data),
+  });
+}
+
+export function useFlowEndpoint(instanceId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['flow-endpoint', instanceId],
+    enabled: !!instanceId && enabled,
+    retry: false,
+    queryFn: () => req<FlowEndpointConfig>(`${flowsPath(instanceId ?? '')}/endpoint`),
+  });
+}
+
+export function useSetFlowEndpoint(instanceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string | null) =>
+      req<FlowEndpointConfig>(`${flowsPath(instanceId)}/endpoint`, {
+        method: 'PUT',
+        body: JSON.stringify({ url }),
+      }),
+    onSuccess: (data) => qc.setQueryData(['flow-endpoint', instanceId], data),
+  });
+}
+
+export const FLOW_SESSIONS_PAGE_SIZE = 25;
+
+/** Execuções, mais novas primeiro; o cursor é o `createdAt` da última linha (`before`). */
+export function useFlowSessions(
+  instanceId: string | null,
+  status: FlowSessionStatus | '',
+  enabled = true,
+) {
+  return useInfiniteQuery({
+    queryKey: ['flow-sessions', instanceId, status],
+    enabled: !!instanceId && enabled,
+    retry: false,
+    initialPageParam: '',
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams({ limit: String(FLOW_SESSIONS_PAGE_SIZE) });
+      if (status) p.set('status', status);
+      if (pageParam) p.set('before', pageParam);
+      return req<FlowSession[]>(`${flowsPath(instanceId ?? '')}/sessions?${p.toString()}`);
+    },
+    getNextPageParam: (last) =>
+      last.length === FLOW_SESSIONS_PAGE_SIZE ? last[last.length - 1].createdAt : undefined,
+  });
+}
+
+export function useFlowSession(instanceId: string, flowToken: string | null) {
+  return useQuery({
+    queryKey: ['flow-session', instanceId, flowToken],
+    enabled: !!instanceId && !!flowToken,
+    retry: false,
+    queryFn: () =>
+      req<FlowSession>(`${flowsPath(instanceId)}/sessions/${encodeURIComponent(flowToken ?? '')}`),
   });
 }
 

@@ -16,11 +16,14 @@ import { PlaygroundPage } from '@/pages/PlaygroundPage';
 import { InboxPage } from '@/pages/InboxPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { TemplatesPage } from '@/pages/TemplatesPage';
+import { FlowsPage } from '@/pages/FlowsPage';
 
 const TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/instances': 'Instâncias',
   '/inbox': 'Inbox',
+  '/templates': 'Templates',
+  '/flows': 'Flows',
   '/logs': 'Logs',
   '/playground': 'Playground',
   '/settings': 'Configurações',
@@ -42,6 +45,7 @@ export default function App() {
         {/* Mesma página; `scope` só escolhe o ChatType do filtro (ver INBOX_SCOPES). */}
         <Route path="inbox/:scope" element={<InboxPage />} />
         <Route path="templates" element={<TemplatesPage />} />
+        <Route path="flows" element={<FlowsPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="playground" element={<PlaygroundPage />} />
         <Route path="settings" element={<SettingsPage onLogout={logout} />} />

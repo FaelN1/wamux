@@ -364,6 +364,24 @@ export class FlowsController {
     return this.svc.assets(id, flowId);
   }
 
+  @Get(':flowId/json')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Conteúdo do Flow JSON vigente.',
+    description:
+      'O gateway baixa o asset na Meta e devolve o texto — evita depender da URL temporária do ' +
+      'CDN (e de CORS) no cliente. `flowJson: null` quando o Flow ainda não tem JSON.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiParam({ name: 'flowId', description: 'ID do Flow.' })
+  @ApiOkResponse({
+    schema: { type: 'object', properties: { flowJson: { type: 'string', nullable: true } } },
+  })
+  @ApiResponse(CLOUD_ONLY_501)
+  json(@Param('id') id: string, @Param('flowId') flowId: string) {
+    return this.svc.json(id, flowId);
+  }
+
   @Post(':flowId/assets')
   @RequireScope(ApiKeyAction.SETTING)
   @ApiOperation({

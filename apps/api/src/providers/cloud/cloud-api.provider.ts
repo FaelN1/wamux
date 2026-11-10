@@ -786,6 +786,19 @@ export class CloudApiProvider extends BaseProvider {
     return ((res.data as { data?: FlowAsset[] })?.data ?? []) as FlowAsset[];
   }
 
+  /** Baixa o Flow JSON do asset (URL assinada e temporária do CDN da Meta). `null` se não houver. */
+  async getFlowJson(id: string): Promise<string | null> {
+    const assets = await this.listFlowAssets(id);
+    const url = (assets.find((a) => a.asset_type === 'FLOW_JSON') ?? assets[0])?.download_url;
+    if (!url) return null;
+    const res = await axios.get<string>(url, {
+      responseType: 'text',
+      transformResponse: (d: unknown) => d, // mantém o texto cru (sem parse/reformatação)
+      timeout: 20_000,
+    });
+    return res.data;
+  }
+
   // ── Flows: criptografia do endpoint (chave por número) ──
   // A privada fica no SessionStore (mesma tabela das credenciais de sessão),
   // nunca em `instance.config` nem em resposta de API.

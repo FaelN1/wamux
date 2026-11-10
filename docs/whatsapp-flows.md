@@ -20,6 +20,9 @@ Consultado em 2026-11-10: Graph API **v26.0** (default do gateway); Flow JSON re
 recomendada, 3.0 suportada. Versões congeladas continuam enviáveis até expirarem; a Meta avisa
 pelo evento `flow.status_update` (`FLOW_VERSION_EXPIRY_WARNING`).
 
+No painel, a página **Flows** cobre o mesmo ciclo: lista por status, editor do Flow JSON com os
+erros de validação da Meta, envio de teste, endpoint e chave de criptografia, e as execuções.
+
 ## Pré-requisitos (instância `cloud`)
 
 `config` da instância: `phoneNumberId`, `accessToken`, `wabaId` (gestão de Flows usa a WABA) e,
@@ -38,6 +41,7 @@ Todas as rotas abaixo ficam em `/api/v1/instances/:id/flows` e usam o header `ap
 | Atualizar metadados (só DRAFT)                                            | `PATCH /:flowId`          | `setting` |
 | Enviar/atualizar o Flow JSON (só DRAFT)                                   | `POST /:flowId/assets`    | `setting` |
 | Baixar o Flow JSON vigente                                                | `GET /:flowId/assets`     | `read`    |
+| Conteúdo do Flow JSON vigente (o gateway baixa e devolve `{ flowJson }`)  | `GET /:flowId/json`       | `read`    |
 | Publicar                                                                  | `POST /:flowId/publish`   | `setting` |
 | Depreciar                                                                 | `POST /:flowId/deprecate` | `setting` |
 | Apagar (só DRAFT)                                                         | `DELETE /:flowId`         | `delete`  |

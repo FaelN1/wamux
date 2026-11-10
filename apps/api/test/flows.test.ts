@@ -256,3 +256,11 @@ describe('Flows — resposta (nfm_reply) normalizada', () => {
     assert.equal(got[0].flowResponse?.flowToken, 'tok-2');
   });
 });
+
+describe('Flows — conteúdo do Flow JSON', () => {
+  it('sem asset de Flow JSON devolve null (não tenta baixar)', async () => {
+    const p = cloud({ wabaId: '222' });
+    (p as unknown as { mgmt: unknown }).mgmt = { get: async () => ({ data: { data: [] } }) };
+    assert.equal(await p.getFlowJson('123'), null);
+  });
+});
