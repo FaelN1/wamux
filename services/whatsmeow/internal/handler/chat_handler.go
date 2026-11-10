@@ -117,7 +117,7 @@ func (h *ChatHandler) SendMessage(c *fiber.Ctx) error {
 	msgID, err := client.SendText(jid, req.Text, "")
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", jid, "text", req.Text, false, "", "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, jid, "text", req.Text, false, "", "sent", "")
@@ -174,7 +174,7 @@ func (h *ChatHandler) SendMedia(c *fiber.Ctx) error {
 	msgID, err := client.SendMediaBytes(jid, data, mediaType, mimeType, caption, file.Filename)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", jid, mediaType, caption, true, mimeType, "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	preview := caption

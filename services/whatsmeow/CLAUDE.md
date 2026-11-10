@@ -48,6 +48,7 @@ Copy `.env.example` to `.env`. Required vars: `DATABASE_URL`, `MASTER_API_KEY`. 
 
 ### Webhook System
 - `internal/webhook/dispatcher.go`: persists deliveries to PostgreSQL, then attempts delivery in a goroutine. Exponential backoff retry (7 attempts max: 0s, 1s, 2s, 4s, 8s, 16s, 32s). 4xx responses immediately discard. A background worker polls for pending deliveries every 5 seconds.
+- Every delivery is signed: header `X-Wamux-Signature: sha256=<lowercase hex HMAC-SHA256(MASTER_API_KEY, exact body)>`. The gateway's public inbound route verifies it — do not change the format without updating the gateway.
 - Instances opt-in to specific events via `webhook_events` JSON array: `CONNECTION_STATUS`, `MESSAGE`, `MESSAGE_STATUS`, `MESSAGE_REACTION`, `GROUP_MEMBERS_EDIT`.
 
 ### Real-time Updates

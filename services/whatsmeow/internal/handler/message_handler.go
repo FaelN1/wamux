@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/url"
 
 	"wamux_go/internal/instance"
@@ -8,6 +9,7 @@ import (
 	"wamux_go/internal/whatsapp"
 
 	"github.com/gofiber/fiber/v2"
+	"go.mau.fi/whatsmeow"
 )
 
 type MessageHandler struct {
@@ -54,7 +56,7 @@ func (h *MessageHandler) SendText(c *fiber.Ctx) error {
 	msgID, err := client.SendText(req.To, req.Text, req.ReplyTo)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", req.To, "text", req.Text, false, "", "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, req.To, "text", req.Text, false, "", "sent", "")
@@ -96,7 +98,7 @@ func (h *MessageHandler) SendMedia(c *fiber.Ctx) error {
 	msgID, err := client.SendMedia(req)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", req.To, req.Type, req.Caption, true, req.MimeType, "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, req.To, req.Type, req.Caption, true, req.MimeType, "sent", "")
@@ -137,7 +139,7 @@ func (h *MessageHandler) SendPoll(c *fiber.Ctx) error {
 
 	msgID, err := client.SendPoll(req)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -181,7 +183,7 @@ func (h *MessageHandler) SendStatus(c *fiber.Ctx) error {
 
 	msgID, err := client.SendStatus(req)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -227,7 +229,7 @@ func (h *MessageHandler) React(c *fiber.Ctx) error {
 
 	msgID, err := client.React(req.To, req.MessageID, req.Sender, req.Emoji, req.FromMe)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -271,7 +273,7 @@ func (h *MessageHandler) Edit(c *fiber.Ctx) error {
 
 	msgID, err := client.Edit(req.To, req.MessageID, req.Text)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -311,7 +313,7 @@ func (h *MessageHandler) SendLocation(c *fiber.Ctx) error {
 
 	msgID, err := client.SendLocation(req)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -351,7 +353,7 @@ func (h *MessageHandler) SendContact(c *fiber.Ctx) error {
 
 	msgID, err := client.SendContact(req)
 	if err != nil {
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 
 	return c.JSON(fiber.Map{
@@ -478,6 +480,29 @@ func internalErrorResponse(c *fiber.Ctx, msg string) error {
 	})
 }
 
+// sendErrorResponse maps a WhatsApp send failure to an HTTP response. A
+// recipient that does not exist on WhatsApp is the caller's problem, not ours,
+// so it becomes a 422 with a stable code instead of a generic 500.
+func sendErrorResponse(c *fiber.Ctx, err error) error {
+	status, code := sendErrorStatus(err)
+	if status == fiber.StatusInternalServerError {
+		return internalErrorResponse(c, err.Error())
+	}
+	return c.Status(status).JSON(fiber.Map{
+		"error":   code,
+		"message": err.Error(),
+		"status":  status,
+	})
+}
+
+// sendErrorStatus classifies a send error into HTTP status + machine-readable code.
+func sendErrorStatus(err error) (int, string) {
+	if errors.Is(err, whatsmeow.ErrRecipientNotOnWhatsApp) {
+		return fiber.StatusUnprocessableEntity, "recipient_not_on_whatsapp"
+	}
+	return fiber.StatusInternalServerError, "internal_error"
+}
+
 // ── interativos ─────────────────────────────────────────────
 
 // POST /api/v1/message/buttons
@@ -498,7 +523,7 @@ func (h *MessageHandler) SendButtons(c *fiber.Ctx) error {
 	msgID, err := client.SendButtons(req)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", req.To, "buttons", req.Text, false, "", "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, req.To, "buttons", req.Text, false, "", "sent", "")
 	return c.JSON(fiber.Map{"message_id": msgID, "status": "sent"})
@@ -522,7 +547,7 @@ func (h *MessageHandler) SendList(c *fiber.Ctx) error {
 	msgID, err := client.SendList(req)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", req.To, "list", req.Text, false, "", "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, req.To, "list", req.Text, false, "", "sent", "")
 	return c.JSON(fiber.Map{"message_id": msgID, "status": "sent"})
@@ -546,7 +571,7 @@ func (h *MessageHandler) SendPix(c *fiber.Ctx) error {
 	msgID, err := client.SendPix(req)
 	if err != nil {
 		h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, "", req.To, "pix", req.Merchant, false, "", "error", err.Error())
-		return internalErrorResponse(c, err.Error())
+		return sendErrorResponse(c, err)
 	}
 	h.manager.GetMsgLog().LogOutgoing(c.Context(), inst.ID, msgID, req.To, "pix", req.Merchant, false, "", "sent", "")
 	return c.JSON(fiber.Map{"message_id": msgID, "status": "sent"})
