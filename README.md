@@ -67,6 +67,17 @@ Bibliotecas diferentes, formatos de evento diferentes, sessões para gerenciar. 
 
 ## Comece em minutos
 
+Um comando baixa o projeto e conduz a instalação — confere git e Docker, pergunta as configurações, gera o `.env` com segredos fortes e sobe a stack:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/FaelN1/wamux/main/install.sh | bash
+```
+
+O instalador não instala nada no sistema sem perguntar e nunca sobrescreve um `.env` existente sem backup. Rode-o de novo (`./install.sh`, dentro da pasta) para reconfigurar ou atualizar. Opções: `--dir <pasta>`, `--branch <nome>`, `--yes` (sem perguntas, padrões e segredos gerados) e `--no-start` (só prepara o `.env`) — por exemplo `… | bash -s -- --dir /opt/wamux`.
+
+<details>
+<summary><b>Instalação manual</b></summary>
+
 Na raiz do projeto, copie a configuração e suba os serviços:
 
 ```bash
@@ -75,7 +86,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-**Abra o [painel em localhost:8080](http://localhost:8080)**, informe a `GLOBAL_API_KEY` configurada no `.env` e crie sua primeira instância.
+</details>
+
+**Abra o [painel em localhost:8080](http://localhost:8080)**, informe a `GLOBAL_API_KEY` (o instalador a mostra ao final; ela fica no `.env`) e crie sua primeira instância.
 
 | Acesso                | Endereço local                                                |
 | --------------------- | ------------------------------------------------------------- |
