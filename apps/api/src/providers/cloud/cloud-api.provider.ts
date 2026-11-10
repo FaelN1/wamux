@@ -487,19 +487,34 @@ export class CloudApiProvider extends BaseProvider {
     await this.mgmt.delete(`/${this.wabaId}/message_templates`, { params });
   }
 
+  /**
+   * `route: marketing` usa a Marketing Messages API: mesmo corpo do template,
+   * outro endpoint (`/marketing_messages`), só categoria MARKETING. É envio
+   * unitário como qualquer outro — a otimização de entrega é da Meta.
+   */
   async sendTemplate(input: SendTemplateInput): Promise<SendResult> {
     const to = this.toNumber(input.to);
-    const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
-      messaging_product: 'whatsapp',
-      ...this.addr(to),
-      type: 'template',
-      template: {
-        name: input.name,
-        language: { code: input.language },
-        ...(input.components ? { components: input.components } : {}),
+    const marketing = input.route === 'marketing';
+    const res = await this.http.post(
+      `/${this.phoneNumberId}/${marketing ? 'marketing_messages' : 'messages'}`,
+      {
+        messaging_product: 'whatsapp',
+        ...(marketing ? { recipient_type: 'individual' } : {}),
+        ...this.addr(to),
+        type: 'template',
+        template: {
+          name: input.name,
+          language: { code: input.language },
+          ...(input.components ? { components: input.components } : {}),
+        },
+        ...(marketing && input.productPolicy ? { product_policy: input.productPolicy } : {}),
+        ...(marketing && input.messageActivitySharing != null
+          ? { message_activity_sharing: input.messageActivitySharing }
+          : {}),
+        // a MM API é só de envio de template de marketing — sem reply/context.
+        ...(marketing ? {} : this.context(input.quotedMessageId)),
       },
-      ...this.context(input.quotedMessageId),
-    });
+    );
     return this.result(res.data, to);
   }
 

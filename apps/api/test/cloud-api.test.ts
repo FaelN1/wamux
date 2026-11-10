@@ -374,3 +374,44 @@ describe('Cloud API — erros da Graph viram erro canônico', () => {
     assert.equal(status({ isAxiosError: true, message: 'ECONNRESET' }), 502);
   });
 });
+
+describe('Cloud API — Marketing Messages API', () => {
+  it('route=marketing usa /marketing_messages com product_policy e activity sharing', async () => {
+    const { p } = setup();
+    const calls = capture(p);
+    await p.sendTemplate({
+      to: '5511999999999',
+      name: 'promo',
+      language: 'pt_BR',
+      route: 'marketing',
+      productPolicy: 'STRICT',
+      messageActivitySharing: false,
+      quotedMessageId: 'wamid.X',
+    });
+    assert.equal(calls[0].url, '/111/marketing_messages');
+    const body = calls[0].body as Record<string, unknown>;
+    assert.equal(body.recipient_type, 'individual');
+    assert.equal(body.to, '5511999999999');
+    assert.equal(body.type, 'template');
+    assert.equal(body.product_policy, 'STRICT');
+    assert.equal(body.message_activity_sharing, false);
+    assert.equal('context' in body, false); // MM API não aceita reply
+  });
+
+  it('rota padrão continua em /messages, sem campos da MM API', async () => {
+    const { p } = setup();
+    const calls = capture(p);
+    await p.sendTemplate({
+      to: 'BR.1349120865530',
+      name: 'pedido',
+      language: 'pt_BR',
+      productPolicy: 'STRICT',
+      quotedMessageId: 'wamid.X',
+    });
+    assert.equal(calls[0].url, '/111/messages');
+    const body = calls[0].body as Record<string, unknown>;
+    assert.equal(body.recipient, 'BR.1349120865530');
+    assert.equal('product_policy' in body, false);
+    assert.deepEqual(body.context, { message_id: 'wamid.X' });
+  });
+});

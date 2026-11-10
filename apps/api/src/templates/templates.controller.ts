@@ -78,6 +78,13 @@ const SEND_RESULT_SCHEMA: SchemaObject = {
     status: { type: 'string', enum: ['sent', 'queued'] },
     ack: { type: 'string', description: 'ack inicial (entrega real confirmada por evento)' },
     fallbackUsed: { type: 'boolean', description: 'true se degradou para texto' },
+    route: {
+      type: 'string',
+      enum: ['cloud', 'marketing'],
+      description:
+        'endpoint usado no envio. Com route=marketing e fallback permitido, a Meta ainda pode ' +
+        'entregar pela Cloud API — confirme por `pricing.category` no status (marketing_lite = MM API).',
+    },
   },
 };
 

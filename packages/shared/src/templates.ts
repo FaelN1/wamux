@@ -91,7 +91,12 @@ export type TemplateParam =
   | { type: 'currency'; currency: { fallback_value: string; code: string; amount_1000: number } }
   | { type: 'date_time'; date_time: { fallback_value: string } }
   | { type: 'payload'; payload: string }
-  | { type: 'coupon_code'; coupon_code: string };
+  | { type: 'coupon_code'; coupon_code: string }
+  /** botão FLOW: token de correlação e dados iniciais da primeira tela. */
+  | {
+      type: 'action';
+      action: { flow_token?: string; flow_action_data?: Record<string, unknown> };
+    };
 
 export type TemplateSendComponent =
   | { type: 'body'; parameters: TemplateParam[] }
@@ -110,7 +115,25 @@ export interface SendTemplateInput {
   language: string;
   components?: TemplateSendComponent[];
   quotedMessageId?: string;
+  /**
+   * Por onde enviar. `cloud` (default) = `/messages`. `marketing` = Marketing
+   * Messages API (`/marketing_messages`) — só templates da categoria MARKETING,
+   * com otimização de entrega da Meta. A Meta desliga marketing em `/messages`
+   * em 2027-10-13 (contas novas: 2027-04-13).
+   */
+  route?: TemplateSendRoute;
+  /**
+   * Só com `route: marketing`. `CLOUD_API_FALLBACK` (default da Meta): se a
+   * conta não concluiu o onboarding da MM API, a Meta entrega pela Cloud API.
+   * `STRICT`: sem fallback — falha em vez de cair na Cloud.
+   */
+  productPolicy?: MarketingProductPolicy;
+  /** Só com `route: marketing`: compartilhar atividade da mensagem com a Meta (omitido = configuração da conta). */
+  messageActivitySharing?: boolean;
 }
+
+export type TemplateSendRoute = 'cloud' | 'marketing';
+export type MarketingProductPolicy = 'CLOUD_API_FALLBACK' | 'STRICT';
 
 export interface TemplateAnalyticsQuery {
   start: number;
