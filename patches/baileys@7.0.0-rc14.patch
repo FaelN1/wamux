@@ -1,5 +1,5 @@
 diff --git a/lib/Defaults/index.js b/lib/Defaults/index.js
-index ef165787319adbe10363966226acb06d1374359c..27d8c893880a71eb5bfcae07b07592eb8b1fa959 100644
+index b341e9d4c78de85f77a32869fb81c83e54788e0b..63124229cfc45e1ef1601bbc5f839af8bce63da5 100644
 --- a/lib/Defaults/index.js
 +++ b/lib/Defaults/index.js
 @@ -93,6 +93,19 @@ export const MEDIA_PATH_MAP = {
@@ -22,6 +22,49 @@ index ef165787319adbe10363966226acb06d1374359c..27d8c893880a71eb5bfcae07b07592eb
  export const MEDIA_HKDF_KEY_MAPPING = {
      audio: 'Audio',
      document: 'Document',
+diff --git a/lib/Socket/messages-recv.js b/lib/Socket/messages-recv.js
+index f2003ac00ef223468c432a1bbe0a0eb02c1453b2..035784014e6b223c9ca63310a424760e7a820e43 100644
+--- a/lib/Socket/messages-recv.js
++++ b/lib/Socket/messages-recv.js
+@@ -1576,11 +1576,25 @@ export const makeMessagesRecvSocket = (config) => {
+             return exec(node, false).catch(err => onUnexpectedError(err, identifier));
+         }
+     };
++    // WAMux patch (back-port do upstream PR #2883): algumas contas passaram a
++    // receber os status dos contatos como stanza <status> de topo, em vez de
++    // <message from="status@broadcast">. O conteúdo não é decodificado aqui, mas
++    // PRECISA de ack: sem ele o servidor encerra o stream ~50 min depois com
++    // <stream:error><ack class="status"/></stream:error> e reentrega no reconnect.
++    const handleStatus = async (node) => {
++        try {
++            await sendMessageAck(node);
++        }
++        catch (error) {
++            onUnexpectedError(error, 'acking status stanza');
++        }
++    };
+     const offlineNodeProcessor = makeOfflineNodeProcessor(new Map([
+         ['message', handleMessage],
+         ['call', handleCall],
+         ['receipt', handleReceipt],
+-        ['notification', handleNotification]
++        ['notification', handleNotification],
++        ['status', handleStatus]
+     ]), {
+         isWsOpen: () => ws.isOpen,
+         onUnexpectedError,
+@@ -1621,6 +1635,11 @@ export const makeMessagesRecvSocket = (config) => {
+     ws.on('CB:notification', async (node) => {
+         await processNode('notification', node, 'handling notification', handleNotification);
+     });
++    // WAMux patch (upstream PR #2883): ver handleStatus acima.
++    ws.on('CB:status', async (node) => {
++        // processNode faz o ack de JIDs ignorados por conta própria, fora do try/catch do handleStatus
++        await processNode('status', node, 'acking status stanza', handleStatus).catch(error => onUnexpectedError(error, 'acking status stanza'));
++    });
+     ws.on('CB:ack,class:message', (node) => {
+         handleBadAck(node).catch(error => onUnexpectedError(error, 'handling bad ack'));
+     });
 diff --git a/lib/Socket/messages-send.js b/lib/Socket/messages-send.js
 index d61e064d01252fb1aaae4bf7b0f295df8a3c4def..64e80549182bfdb5ddaebcb185b246bbc46b84c7 100644
 --- a/lib/Socket/messages-send.js
@@ -119,3 +162,14 @@ index 247b1f12d912923d4ad032e6572fc76cd958e51b..e353dee918753caea859c93ea83c727c
                  ...uploadData,
                  media: undefined
              })
+diff --git a/lib/Utils/offline-node-processor.d.ts b/lib/Utils/offline-node-processor.d.ts
+index c3a3dc7e8c80f8223190d5f43134455a5c3e0354..fb8a1e544ac12493b284857060f47f7cdc11e7fa 100644
+--- a/lib/Utils/offline-node-processor.d.ts
++++ b/lib/Utils/offline-node-processor.d.ts
+@@ -1,5 +1,5 @@
+ import type { BinaryNode } from '../WABinary/index.js';
+-export type MessageType = 'message' | 'call' | 'receipt' | 'notification';
++export type MessageType = 'message' | 'call' | 'receipt' | 'notification' | 'status';
+ export type OfflineNodeProcessorDeps = {
+     isWsOpen: () => boolean;
+     onUnexpectedError: (error: Error, msg: string) => void;
