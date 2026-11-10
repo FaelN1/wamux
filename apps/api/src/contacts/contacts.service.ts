@@ -1,11 +1,7 @@
 import { Injectable, NotImplementedException } from '@nestjs/common';
 import { InstanceManagerService } from '../instance/instance-manager.service';
 import { WhatsAppProvider } from '../providers/provider.interface';
-import {
-  FetchMessagesPage,
-  PresenceInfo,
-  SetPresenceInput,
-} from '../providers/provider.types';
+import { FetchMessagesPage, PresenceInfo, SetPresenceInput } from '../providers/provider.types';
 
 /** Endpoints de conveniência. Gate de capability → 501 uniforme. */
 @Injectable()
@@ -33,8 +29,17 @@ export class ContactsService {
     const p = await this.cap(instanceId, 'fetchMessages', (x) => x.fetchMessages);
     return p.fetchMessages!(chatId, { limit, before });
   }
-  async markRead(instanceId: string, chatId: string, messageIds?: string[]): Promise<void> {
-    return (await this.cap(instanceId, 'markRead', (p) => p.markRead)).markRead!(chatId, messageIds);
+  async markRead(
+    instanceId: string,
+    chatId: string,
+    messageIds?: string[],
+    opts?: { typing?: boolean },
+  ): Promise<void> {
+    return (await this.cap(instanceId, 'markRead', (p) => p.markRead)).markRead!(
+      chatId,
+      messageIds,
+      opts,
+    );
   }
 
   /** Provider vivo que suporta `flag` E expõe o método. Único ponto de 501. */

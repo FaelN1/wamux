@@ -5,7 +5,7 @@ export class UpdateFlowJsonDto {
   /** conteúdo do flow.json como string. */
   @ApiProperty({
     description: 'Conteúdo do flow.json como string.',
-    example: '{"version":"5.0","screens":[]}',
+    example: '{"version":"7.3","screens":[]}',
   })
   @IsString()
   @IsNotEmpty()

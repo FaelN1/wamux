@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  GoneException,
   Get,
   HttpCode,
   Param,
@@ -31,10 +32,7 @@ import {
   SetPinDto,
   VerifyCodeDto,
 } from './dto/account-actions.dto';
-import {
-  ConversationAnalyticsQueryDto,
-  MessagingAnalyticsQueryDto,
-} from './dto/analytics.query.dto';
+import { PricingAnalyticsQueryDto, MessagingAnalyticsQueryDto } from './dto/analytics.query.dto';
 
 const csv = (s?: string): string[] | undefined =>
   s
@@ -293,22 +291,73 @@ export class AccountController {
     });
   }
 
-  @Get('conversation-analytics')
+  @Get('pricing-analytics')
   @RequireScope(ApiKeyAction.READ)
   @ApiOperation({
-    summary: 'Analytics de conversas',
-    description: 'Métricas de conversas (custo/volume por categoria) da WABA na janela informada.',
+    summary: 'Analytics de preço por mensagem',
+    description:
+      'Custo/volume por categoria e tipo de preço (`pricing_analytics`) na janela informada. ' +
+      'Substitui `conversation-analytics`.',
   })
-  @ApiOkResponse({ description: 'Analytics de conversas.', schema: ANALYTICS_SCHEMA })
+  @ApiOkResponse({ description: 'Analytics de preço.', schema: ANALYTICS_SCHEMA })
   @ApiResponse({ status: 501, description: NOT_CLOUD })
-  conversationAnalytics(@Param('id') id: string, @Query() q: ConversationAnalyticsQueryDto) {
-    return this.svc.conversationAnalytics(id, {
+  pricingAnalytics(@Param('id') id: string, @Query() q: PricingAnalyticsQueryDto) {
+    return this.svc.pricingAnalytics(id, {
       start: q.start,
       end: q.end,
       granularity: q.granularity,
+      phoneNumbers: csv(q.phoneNumbers),
+      countryCodes: csv(q.countryCodes),
       metricTypes: csv(q.metricTypes),
-      conversationCategories: csv(q.conversationCategories),
+      pricingTypes: csv(q.pricingTypes),
+      pricingCategories: csv(q.pricingCategories),
       dimensions: csv(q.dimensions),
     });
+  }
+
+  @Get('conversation-analytics')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Analytics de conversas (descontinuado pela Meta)',
+    deprecated: true,
+    description:
+      'A Meta desligou `conversation_analytics` em 2026-11-01 (fim da cobrança por conversa). ' +
+      'Responde 410 — use `pricing-analytics`.',
+  })
+  @ApiResponse({ status: 410, description: 'Recurso descontinuado pela Meta.' })
+  conversationAnalytics(): never {
+    throw new GoneException(
+      'conversation_analytics foi desligado pela Meta em 2026-11-01. Use GET account/pricing-analytics.',
+    );
+  }
+
+  @Put('webhook-override')
+  @RequireScope(ApiKeyAction.SETTING)
+  @ApiOperation({
+    summary: 'Aponta o webhook do número para esta instância',
+    description:
+      'Configura na Meta o override de webhook do número (`webhook_configuration`) para ' +
+      '`{PUBLIC_BASE_URL}/api/webhooks/cloud/:id`, usando o verify_token da instância ou o global. ' +
+      'Webhooks de template e de conta continuam indo para a URL padrão do app.',
+  })
+  @ApiOkResponse({
+    schema: { type: 'object', properties: { callbackUri: { type: 'string' } } },
+  })
+  @ApiResponse({ status: 501, description: NOT_CLOUD })
+  setWebhookOverride(@Param('id') id: string) {
+    return this.svc.setWebhookOverride(id);
+  }
+
+  @Delete('webhook-override')
+  @RequireScope(ApiKeyAction.SETTING)
+  @ApiOperation({
+    summary: 'Remove o override de webhook do número',
+    description: 'O número volta a usar o webhook da WABA ou do app.',
+  })
+  @ApiOkResponse({ schema: OK_SCHEMA })
+  @ApiResponse({ status: 501, description: NOT_CLOUD })
+  async clearWebhookOverride(@Param('id') id: string) {
+    await this.svc.clearWebhookOverride(id);
+    return { ok: true };
   }
 }

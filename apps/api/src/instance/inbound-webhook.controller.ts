@@ -5,10 +5,17 @@ import {
   Get,
   HttpCode,
   Param,
+  NotFoundException,
   Post,
   Query,
+  Req,
+  UnauthorizedException,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { ProviderType } from '@wamux/shared';
+import { WhatsAppProvider } from '../providers/provider.interface';
+import { InstanceService } from './instance.service';
 import { ApiBody, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { InstanceManagerService } from './instance-manager.service';
@@ -34,7 +41,31 @@ export class InboundWebhookController {
   constructor(
     private readonly manager: InstanceManagerService,
     private readonly config: ConfigService,
+    private readonly instances: InstanceService,
   ) {}
+
+  /**
+   * Provider da instância, já AUTENTICADA a origem. A rota só atende a engine
+   * a que pertence (404 nas demais) e o adapter valida a assinatura do corpo
+   * cru (401) antes de qualquer processamento.
+   */
+  private async authenticated(
+    id: string,
+    type: ProviderType,
+    req: Request,
+  ): Promise<WhatsAppProvider> {
+    const provider = await this.manager.ensureConnected(id);
+    if (provider.type !== type) {
+      throw new NotFoundException('Instância não encontrada para este webhook');
+    }
+    const ok =
+      provider.verifyInboundWebhook?.({
+        headers: req.headers,
+        rawBody: (req as Request & { rawBody?: Buffer }).rawBody,
+      }) ?? true;
+    if (!ok) throw new UnauthorizedException('Assinatura do webhook inválida ou ausente');
+    return provider;
+  }
 
   /** Verificação do webhook da Meta (handshake GET). */
   @Get('cloud/:id')
@@ -52,14 +83,19 @@ export class InboundWebhookController {
     description: 'Eco do `hub.challenge` (texto puro) quando o token confere.',
     content: { 'text/plain': { schema: { type: 'string' } } },
   })
-  verifyCloud(
-    @Param('id') _id: string,
+  async verifyCloud(
+    @Param('id') id: string,
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string,
-  ): string {
-    const expected = this.config.get<string>('cloudApi.verifyToken');
-    if (mode === 'subscribe' && token && token === expected) {
+  ): Promise<string> {
+    // verify_token próprio da instância (config.verifyToken) tem precedência
+    // sobre o global — isola tenants que compartilham o gateway.
+    const inst = await this.instances.findOne(id);
+    const expected =
+      (inst.config?.verifyToken as string | undefined) ||
+      this.config.get<string>('cloudApi.verifyToken');
+    if (mode === 'subscribe' && token && expected && token === expected) {
       return challenge;
     }
     throw new ForbiddenException('verify_token inválido');
@@ -71,7 +107,8 @@ export class InboundWebhookController {
     summary: 'Recebe eventos do webhook da Meta (Cloud API)',
     description:
       'A Meta entrega mensagens/status aqui (payload no formato dela). Repassado ao provider ' +
-      'para normalizar e emitir `message`. Pública (sem apikey) — auth por verify_token.',
+      'para normalizar e emitir `message`. Pública (sem apikey) — autenticada pelo header ' +
+      '`X-Hub-Signature-256` (HMAC do corpo com o App Secret); 401 se inválida.',
   })
   @ApiParam({ name: 'id', description: 'ID (uuid) da instância Cloud alvo.' })
   @ApiBody({
@@ -81,8 +118,8 @@ export class InboundWebhookController {
   @ApiOkResponse({
     schema: { type: 'object', properties: { received: { type: 'boolean', example: true } } },
   })
-  async inboundCloud(@Param('id') id: string, @Body() payload: unknown) {
-    const provider = await this.manager.ensureConnected(id);
+  async inboundCloud(@Param('id') id: string, @Body() payload: unknown, @Req() req: Request) {
+    const provider = await this.authenticated(id, ProviderType.CLOUD_API, req);
     await provider.handleInboundWebhook(payload, { source: 'cloud' });
     return { received: true };
   }
@@ -93,7 +130,8 @@ export class InboundWebhookController {
     summary: 'Recebe eventos do sidecar whatsmeow',
     description:
       'O sidecar (wuzapi) entrega mensagens aqui. Repassado ao provider para normalizar e ' +
-      'emitir `message`. Pública (sem apikey) — auth por token compartilhado do sidecar.',
+      'emitir `message`. Pública (sem apikey) — autenticada pelo header `X-Wamux-Signature` ' +
+      '(HMAC do corpo com a master key do sidecar); 401 se inválida.',
   })
   @ApiParam({ name: 'id', description: 'ID (uuid) da instância whatsmeow alvo.' })
   @ApiBody({
@@ -103,8 +141,8 @@ export class InboundWebhookController {
   @ApiOkResponse({
     schema: { type: 'object', properties: { received: { type: 'boolean', example: true } } },
   })
-  async inboundWhatsmeow(@Param('id') id: string, @Body() payload: unknown) {
-    const provider = await this.manager.ensureConnected(id);
+  async inboundWhatsmeow(@Param('id') id: string, @Body() payload: unknown, @Req() req: Request) {
+    const provider = await this.authenticated(id, ProviderType.WHATSMEOW, req);
     await provider.handleInboundWebhook(payload, { source: 'whatsmeow' });
     return { received: true };
   }

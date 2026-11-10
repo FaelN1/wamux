@@ -1,6 +1,13 @@
 import axios, { AxiosInstance } from 'axios';
 import * as QRCode from 'qrcode';
-import { BaseProvider, ProviderContext } from '../provider.interface';
+import {
+  BaseProvider,
+  InboundWebhookMeta,
+  ProviderContext,
+  ProviderRequestError,
+} from '../provider.interface';
+import { verifySha256Signature } from '../webhook-signature.util';
+import { parseNfmReply } from '../flow-response.util';
 import { mapWithConcurrency } from '../concurrency.util';
 import { buildVCard } from '../vcard.util';
 import {
@@ -171,6 +178,23 @@ export class WhatsmeowProvider extends BaseProvider {
       baseURL: this.baseUrl,
       headers: { 'X-API-Key': this.goApiKey! },
       timeout: 20_000,
+    });
+    // Erros de NEGÓCIO do sidecar com código estável viram erro canônico (4xx
+    // claro pro cliente); o resto segue como antes.
+    this.http.interceptors.response.use(undefined, (e: unknown) => {
+      const res = (
+        e as { response?: { status?: number; data?: { error?: string; message?: string } } }
+      ).response;
+      if (res?.status === 422 && res.data?.error === 'recipient_not_on_whatsapp') {
+        throw new ProviderRequestError(
+          'O destinatário não tem WhatsApp.',
+          422,
+          'recipientNotOnWhatsApp',
+          this.type,
+          { message: res.data.message },
+        );
+      }
+      throw e;
     });
   }
 
@@ -527,6 +551,18 @@ export class WhatsmeowProvider extends BaseProvider {
   }
 
   /** Webhook de entrada vindo do serviço Go: { event, instance_id, timestamp, data }. */
+  /**
+   * O sidecar assina cada callback com HMAC-SHA256(MASTER_API_KEY, corpo cru)
+   * em `X-Wamux-Signature`. `whatsmeowRequireSignature=false` só existe para a
+   * janela de upgrade em que um sidecar antigo (sem assinatura) ainda entrega.
+   */
+  verifyInboundWebhook(meta: InboundWebhookMeta): boolean {
+    const header = meta.headers['x-wamux-signature'];
+    const secret = this.str('whatsmeowMasterKey');
+    if (!header && this.config.whatsmeowRequireSignature === false) return true;
+    return verifySha256Signature(secret, meta.rawBody, header);
+  }
+
   async handleInboundWebhook(payload: unknown): Promise<void> {
     const evt = payload as GoWebhook;
     switch (evt?.event) {
@@ -1438,7 +1474,13 @@ export class WhatsmeowProvider extends BaseProvider {
       audio: MessageType.AUDIO,
       document: MessageType.DOCUMENT,
       sticker: MessageType.STICKER,
+      interactive: MessageType.INTERACTIVE,
     };
+    // resposta de Flow (nativeFlowResponse): mesmo formato canônico da Cloud.
+    const fr = data.flow_response;
+    const flowResponse = fr
+      ? parseNfmReply({ name: fr.name, body: fr.body, response_json: fr.params_json })
+      : undefined;
     return {
       provider: this.type,
       instanceId: this.instanceId,
@@ -1449,7 +1491,8 @@ export class WhatsmeowProvider extends BaseProvider {
       isGroup: Boolean(data.is_group),
       timestamp: data.timestamp ?? 0,
       type: typeMap[data.type] ?? MessageType.UNKNOWN,
-      text: data.text || undefined,
+      text: data.text || fr?.body || undefined,
+      ...(flowResponse ? { flowResponse } : {}),
       // media_base64 fica só no `raw` para não inflar o evento canônico.
       media: data.has_media
         ? { mimetype: data.mime_type, filename: data.file_name, caption: data.text }
@@ -1482,6 +1525,8 @@ interface GoMessageData {
   mime_type?: string;
   file_name?: string;
   media_base64?: string;
+  /** resposta de Flow: `params_json` é a string JSON crua do nativeFlowResponse. */
+  flow_response?: { name?: string; params_json?: string; body?: string };
 }
 interface GoStatusData {
   message_ids?: string[];

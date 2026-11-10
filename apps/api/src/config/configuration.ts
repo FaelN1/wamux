@@ -81,12 +81,30 @@ export default () => ({
     // Base URL pública deste gateway, usada como destino do webhook que o
     // serviço Go chama de volta (…/api/webhooks/whatsmeow/:id).
     callbackBaseUrl: process.env.WHATSMEOW_CALLBACK_BASE ?? 'http://localhost:3000',
+    // Exige `X-Wamux-Signature` (HMAC do corpo com a master key) nos callbacks
+    // do sidecar. Só desligue durante um upgrade em que o sidecar antigo (que
+    // não assina) ainda esteja no ar.
+    requireSignature: (process.env.WHATSMEOW_WEBHOOK_REQUIRE_SIGNATURE ?? 'true') === 'true',
   },
 
   cloudApi: {
-    version: process.env.CLOUD_API_VERSION ?? 'v21.0',
+    version: process.env.CLOUD_API_VERSION ?? 'v26.0',
     baseUrl: process.env.CLOUD_API_BASE_URL ?? 'https://graph.facebook.com',
     verifyToken: process.env.CLOUD_API_VERIFY_TOKEN ?? '',
+    // App Secret do app da Meta — valida `X-Hub-Signature-256` dos webhooks.
+    // A instância pode sobrescrever com `config.appSecret`.
+    appSecret: process.env.CLOUD_API_APP_SECRET ?? '',
+  },
+
+  // WhatsApp Flows: correlação das execuções (tabela flow_sessions).
+  flows: {
+    // false = guarda só os metadados de correlação; o conteúdo da resposta
+    // segue apenas no webhook, sem ficar at-rest.
+    saveResponseData: (process.env.FLOWS_SAVE_RESPONSE_DATA ?? 'true') === 'true',
+    // 0 = nunca expurga.
+    sessionRetentionDays: parseInt(process.env.FLOWS_SESSION_RETENTION_DAYS ?? '0', 10),
+    // Timeout da chamada ao endpoint do integrador (a Meta espera no máx. 10s).
+    dataExchangeTimeoutMs: parseInt(process.env.FLOWS_DATA_EXCHANGE_TIMEOUT_MS ?? '8000', 10),
   },
 
   // Persistência do Inbox (contato-chat/mensagens). Opt-in por privacidade —

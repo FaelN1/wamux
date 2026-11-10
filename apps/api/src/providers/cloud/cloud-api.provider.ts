@@ -1,11 +1,29 @@
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
 import { Readable } from 'node:stream';
-import { BaseProvider, ProviderContext } from '../provider.interface';
+import {
+  BaseProvider,
+  FlowEndpointHandlers,
+  FlowEndpointHttpRequest,
+  FlowTokenInvalidError,
+  InboundWebhookMeta,
+  ProviderContext,
+  ProviderRequestError,
+} from '../provider.interface';
+import {
+  FlowDecryptionError,
+  decryptFlowRequest,
+  encryptFlowResponse,
+  generateFlowKeyPair,
+  isEncryptedFlowRequest,
+  publicKeyFromPrivate,
+} from './flow-endpoint-crypto';
+import { verifySha256Signature } from '../webhook-signature.util';
+import { parseNfmReply } from '../flow-response.util';
 import {
   ConnectCallInput,
   ConnectionStatus,
-  ConversationAnalyticsQuery,
+  PricingAnalyticsQuery,
   CreateFlowInput,
   CreateFlowResult,
   CreateTemplateInput,
@@ -13,13 +31,20 @@ import {
   DeleteTemplateInput,
   EditTemplatePatch,
   Flow,
-  FlowMetricsQuery,
+  FlowAsset,
+  FlowEncryptionInfo,
+  FlowResponse,
+  SetFlowEncryptionInput,
+  UpdateFlowMetadataInput,
   GroupInfo,
   MessageAckStatus,
   MessageTemplate,
   MessagingAnalyticsQuery,
   MessageType,
+  NormalizedDeletion,
+  NormalizedEdit,
   NormalizedMessage,
+  NormalizedReaction,
   PhoneNumberInfo,
   ProfileInfo,
   ProviderType,
@@ -106,7 +131,7 @@ export class CloudApiProvider extends BaseProvider {
     if (!accessToken) throw new Error('Cloud API: config.accessToken ausente');
 
     const baseUrl = (this.config.cloudApiBaseUrl as string) ?? 'https://graph.facebook.com';
-    const version = (this.config.cloudApiVersion as string) ?? 'v21.0';
+    const version = (this.config.cloudApiVersion as string) ?? 'v26.0';
     this.baseUrl = `${baseUrl}/${version}`;
     this.messagingToken = accessToken;
 
@@ -125,6 +150,12 @@ export class CloudApiProvider extends BaseProvider {
       timeout: 20_000,
     });
 
+    for (const client of [this.http, this.mgmt]) {
+      client.interceptors.response.use(undefined, (e: unknown) => {
+        throw this.graphError(e);
+      });
+    }
+
     // Número já está "conectado" no lado da Meta.
     this.setStatus(ConnectionStatus.CONNECTED, { wid: this.phoneNumberId });
   }
@@ -138,7 +169,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'text',
       text: { preview_url: input.linkPreview !== false, body: input.text },
       ...this.context(input.quotedMessageId),
@@ -171,7 +202,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: mediaKey,
       [mediaKey]: media,
       ...this.context(input.quotedMessageId),
@@ -206,7 +237,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'reaction',
       reaction: { message_id: input.messageId, emoji: input.emoji },
     });
@@ -218,7 +249,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'location',
       location: {
         latitude: input.latitude,
@@ -244,7 +275,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'contacts',
       contacts,
       ...this.context(input.quotedMessageId),
@@ -294,7 +325,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'interactive',
       interactive,
       ...this.context(input.quotedMessageId),
@@ -324,7 +355,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'interactive',
       interactive,
       ...this.context(input.quotedMessageId),
@@ -336,12 +367,19 @@ export class CloudApiProvider extends BaseProvider {
    * Marca lido via `status:read`. A Cloud exige o `message_id` INBOUND (não o
    * chat) e aceita 1 por chamada — sem ids, não há o que marcar (no-op).
    */
-  async markRead(_chatId: string, messageIds?: string[]): Promise<void> {
-    for (const id of messageIds ?? []) {
+  async markRead(
+    _chatId: string,
+    messageIds?: string[],
+    opts?: { typing?: boolean },
+  ): Promise<void> {
+    const ids = messageIds ?? [];
+    for (const [i, id] of ids.entries()) {
       await this.http.post(`/${this.phoneNumberId}/messages`, {
         messaging_product: 'whatsapp',
         status: 'read',
         message_id: id,
+        // "digitando…" (até 25s ou até a resposta) — só na última mensagem.
+        ...(opts?.typing && i === ids.length - 1 ? { typing_indicator: { type: 'text' } } : {}),
       });
     }
   }
@@ -349,14 +387,19 @@ export class CloudApiProvider extends BaseProvider {
   async blockContact(jid: string): Promise<void> {
     await this.http.post(`/${this.phoneNumberId}/block_users`, {
       messaging_product: 'whatsapp',
-      block_users: [{ user: this.toNumber(jid) }],
+      block_users: [this.blockRef(jid)],
     });
   }
 
   async unblockContact(jid: string): Promise<void> {
     await this.http.delete(`/${this.phoneNumberId}/block_users`, {
-      data: { messaging_product: 'whatsapp', block_users: [{ user: this.toNumber(jid) }] },
+      data: { messaging_product: 'whatsapp', block_users: [this.blockRef(jid)] },
     });
+  }
+
+  private blockRef(jid: string): { user: string } | { user_id: string } {
+    const v = this.toNumber(jid);
+    return BSUID_RE.test(v) ? { user_id: v } : { user: v };
   }
 
   /** Pede a localização do usuário (interactive location_request_message). */
@@ -365,7 +408,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: num,
+      ...this.addr(num),
       type: 'interactive',
       interactive: {
         type: 'location_request_message',
@@ -387,8 +430,24 @@ export class CloudApiProvider extends BaseProvider {
     if (filter?.status) params.status = filter.status;
     if (filter?.language) params.language = filter.language;
     if (filter?.name) params.name = filter.name;
-    const res = await this.mgmt.get(`/${this.wabaId}/message_templates`, { params });
-    return ((res.data as { data?: MessageTemplate[] })?.data ?? []) as MessageTemplate[];
+    return this.paged<MessageTemplate>(`/${this.wabaId}/message_templates`, params);
+  }
+
+  /** Segue a paginação por cursor da Graph API (teto de segurança de 50 páginas). */
+  private async paged<T>(path: string, params: Record<string, string> = {}): Promise<T[]> {
+    const out: T[] = [];
+    let after: string | undefined;
+    for (let page = 0; page < 50; page++) {
+      const res = await this.mgmt.get(path, { params: { ...params, ...(after ? { after } : {}) } });
+      const body = res.data as {
+        data?: T[];
+        paging?: { cursors?: { after?: string }; next?: string };
+      };
+      out.push(...(body?.data ?? []));
+      after = body?.paging?.next ? body.paging.cursors?.after : undefined;
+      if (!after) break;
+    }
+    return out;
   }
 
   async getTemplate(idOrName: string): Promise<MessageTemplate> {
@@ -408,9 +467,6 @@ export class CloudApiProvider extends BaseProvider {
       category: input.category,
       components: input.components,
       ...(input.parameter_format ? { parameter_format: input.parameter_format } : {}),
-      ...(input.allow_category_change != null
-        ? { allow_category_change: input.allow_category_change }
-        : {}),
     });
     const d = res.data as CreateTemplateResult;
     return { id: d?.id, status: d?.status, category: d?.category };
@@ -435,7 +491,7 @@ export class CloudApiProvider extends BaseProvider {
     const to = this.toNumber(input.to);
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
-      to,
+      ...this.addr(to),
       type: 'template',
       template: {
         name: input.name,
@@ -493,11 +549,10 @@ export class CloudApiProvider extends BaseProvider {
   // ── conta/WABA (management token; onboarding usa messaging token) ──
 
   private readonly PHONE_FIELDS =
-    'verified_name,display_phone_number,quality_rating,code_verification_status,name_status,messaging_limit_tier,throughput,platform_type';
+    'verified_name,display_phone_number,quality_rating,code_verification_status,name_status,messaging_limit_tier,throughput,platform_type,health_status,webhook_configuration';
 
   async listPhoneNumbers(): Promise<PhoneNumberInfo[]> {
-    const res = await this.mgmt.get(`/${this.wabaId}/phone_numbers`);
-    return ((res.data as { data?: PhoneNumberInfo[] })?.data ?? []) as PhoneNumberInfo[];
+    return this.paged<PhoneNumberInfo>(`/${this.wabaId}/phone_numbers`);
   }
 
   async getPhoneNumber(): Promise<PhoneNumberInfo> {
@@ -540,7 +595,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.mgmt.get(`/${this.wabaId}`, {
       params: {
         fields:
-          'id,name,currency,timezone_id,account_review_status,business_verification_status,country,message_template_namespace',
+          'id,name,currency,timezone_id,account_review_status,business_verification_status,country,message_template_namespace,health_status',
       },
     });
     return res.data;
@@ -570,25 +625,55 @@ export class CloudApiProvider extends BaseProvider {
     return res.data;
   }
 
-  async conversationAnalytics(query: ConversationAnalyticsQuery): Promise<unknown> {
+  /**
+   * Substitui `conversation_analytics`, que a Meta desligou em 2026-11-01 com o
+   * fim da cobrança por conversa (preço por mensagem desde 2025-07-01).
+   */
+  async pricingAnalytics(query: PricingAnalyticsQuery): Promise<unknown> {
+    const list = (name: string, v?: string[]) =>
+      v?.length ? `.${name}(${JSON.stringify(v)})` : '';
     const field =
-      `conversation_analytics.start(${query.start}).end(${query.end}).granularity(${query.granularity ?? 'DAILY'})` +
-      (query.metricTypes?.length ? `.metric_types(${JSON.stringify(query.metricTypes)})` : '') +
-      (query.conversationCategories?.length
-        ? `.conversation_categories(${JSON.stringify(query.conversationCategories)})`
-        : '') +
-      (query.dimensions?.length ? `.dimensions(${JSON.stringify(query.dimensions)})` : '');
+      `pricing_analytics.start(${query.start}).end(${query.end}).granularity(${query.granularity ?? 'DAILY'})` +
+      list('phone_numbers', query.phoneNumbers) +
+      list('country_codes', query.countryCodes) +
+      list('metric_types', query.metricTypes) +
+      list('pricing_types', query.pricingTypes) +
+      list('pricing_categories', query.pricingCategories) +
+      list('dimensions', query.dimensions);
     const res = await this.mgmt.get(`/${this.wabaId}`, { params: { fields: field } });
     return res.data;
   }
 
+  /**
+   * Aponta o webhook DESTE número para a rota da instância no gateway
+   * (override por número tem precedência sobre o da WABA e o do app). Webhooks
+   * de template/conta continuam indo para a URL padrão do app.
+   */
+  async setWebhookOverride(input: { callbackUri: string; verifyToken: string }): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}`, {
+      webhook_configuration: {
+        override_callback_uri: input.callbackUri,
+        verify_token: input.verifyToken,
+      },
+    });
+  }
+
+  async clearWebhookOverride(): Promise<void> {
+    await this.http.post(`/${this.phoneNumberId}`, {
+      webhook_configuration: { override_callback_uri: '' },
+    });
+  }
+
   // ── WhatsApp Flows (management token; send = messaging token) ──
 
-  private readonly FLOW_FIELDS = 'id,name,status,categories,validation_errors,preview,endpoint_uri';
+  private readonly FLOW_FIELDS =
+    'id,name,status,categories,validation_errors,json_version,data_api_version,endpoint_uri,preview,whatsapp_business_account,application,health_status';
 
   async listFlows(): Promise<Flow[]> {
-    const res = await this.mgmt.get(`/${this.wabaId}/flows`);
-    return ((res.data as { data?: Flow[] })?.data ?? []) as Flow[];
+    return this.paged<Flow>(`/${this.wabaId}/flows`, {
+      fields: 'id,name,status,categories,validation_errors',
+      limit: '100',
+    });
   }
 
   async getFlow(id: string): Promise<Flow> {
@@ -657,7 +742,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to,
+      ...this.addr(to),
       type: 'interactive',
       interactive: {
         type: 'flow',
@@ -671,68 +756,194 @@ export class CloudApiProvider extends BaseProvider {
     return this.result(res.data, to);
   }
 
-  async flowMetrics(id: string, query: FlowMetricsQuery): Promise<unknown> {
-    const field =
-      `metric.name(${query.metric}).granularity(${query.granularity})` +
-      (query.since ? `.since(${query.since})` : '') +
-      (query.until ? `.until(${query.until})` : '');
-    const res = await this.mgmt.get(`/${id}`, { params: { fields: field } });
-    return res.data;
+  /** Só em DRAFT (a Meta rejeita em Flow publicado — o erro dela é repassado). */
+  async updateFlowMetadata(id: string, input: UpdateFlowMetadataInput): Promise<void> {
+    await this.mgmt.post(`/${id}`, {
+      ...(input.name ? { name: input.name } : {}),
+      ...(input.categories?.length ? { categories: input.categories } : {}),
+      ...(input.endpoint_uri != null ? { endpoint_uri: input.endpoint_uri } : {}),
+      ...(input.application_id ? { application_id: input.application_id } : {}),
+    });
   }
 
-  // ── grupos da Cloud API (Groups API — OBA-gated, máx 8 participantes) ──
-  // ⚠️ BODIES NÃO VALIDADOS contra conta real: as páginas get-started/reference
-  // só deram resumo de capacidade, não os JSON literais. Padrão observado:
-  // POST /{PHONE_NUMBER_ID}/groups. Confirmar create/participants/invite antes
-  // de produção — ver docs/cloud-api/05-groups.md.
+  async listFlowAssets(id: string): Promise<FlowAsset[]> {
+    const res = await this.mgmt.get(`/${id}/assets`);
+    return ((res.data as { data?: FlowAsset[] })?.data ?? []) as FlowAsset[];
+  }
+
+  // ── Flows: criptografia do endpoint (chave por número) ──
+  // A privada fica no SessionStore (mesma tabela das credenciais de sessão),
+  // nunca em `instance.config` nem em resposta de API.
+
+  private static readonly FLOW_KEY = 'flow_private_key';
+  private static readonly FLOW_KEY_PASS = 'flow_private_key_passphrase';
+
+  async getFlowEncryption(): Promise<FlowEncryptionInfo> {
+    const res = await this.http.get(`/${this.phoneNumberId}/whatsapp_business_encryption`);
+    // a Meta já documentou as duas formas: campos na raiz ou em `data[0]`.
+    const raw = res.data as Record<string, unknown> & { data?: Record<string, string>[] };
+    const d = (raw?.data?.[0] ?? raw ?? {}) as Record<string, string>;
+    return {
+      business_public_key: d.business_public_key,
+      business_public_key_signature_status: d.business_public_key_signature_status,
+      hasPrivateKey: !!(await this.sessionStore.get(this.instanceId, CloudApiProvider.FLOW_KEY)),
+    };
+  }
+
+  /**
+   * Registra a pública na Meta ANTES de trocar a privada local: se a Meta
+   * recusar, a chave antiga (que ainda casa com a pública vigente) é mantida.
+   */
+  async setFlowEncryption(input: SetFlowEncryptionInput): Promise<FlowEncryptionInfo> {
+    const pair = input.privateKey
+      ? {
+          privateKey: input.privateKey,
+          publicKey: publicKeyFromPrivate(input.privateKey, input.passphrase),
+        }
+      : generateFlowKeyPair();
+    const form = new URLSearchParams({ business_public_key: pair.publicKey });
+    await this.http.post(`/${this.phoneNumberId}/whatsapp_business_encryption`, form.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    await this.sessionStore.set(this.instanceId, CloudApiProvider.FLOW_KEY, pair.privateKey);
+    if (input.privateKey && input.passphrase) {
+      await this.sessionStore.set(
+        this.instanceId,
+        CloudApiProvider.FLOW_KEY_PASS,
+        input.passphrase,
+      );
+    } else {
+      await this.sessionStore.remove(this.instanceId, CloudApiProvider.FLOW_KEY_PASS);
+    }
+    return this.getFlowEncryption();
+  }
+
+  /**
+   * Endpoint de troca de dados. Códigos HTTP do protocolo da Meta:
+   * 432 assinatura inválida · 421 não decifrável (o cliente rebaixa a chave
+   * pública e tenta de novo) · 427 flow_token inválido · 200 com o corpo
+   * cifrado em base64 (texto puro).
+   */
+  async handleFlowEndpoint(
+    req: FlowEndpointHttpRequest,
+    handlers: FlowEndpointHandlers,
+  ): Promise<{ status: number; body: string }> {
+    const secret = this.config.appSecret as string | undefined;
+    if (secret && !verifySha256Signature(secret, req.rawBody, req.headers['x-hub-signature-256'])) {
+      return { status: 432, body: '' };
+    }
+    if (!isEncryptedFlowRequest(req.body)) return { status: 400, body: '' };
+
+    const privateKey = await this.sessionStore.get(this.instanceId, CloudApiProvider.FLOW_KEY);
+    if (!privateKey) {
+      this.logger.error(
+        `[${this.instanceId}] endpoint de Flow chamado sem chave privada — configure flows/encryption`,
+      );
+      return { status: 421, body: '' };
+    }
+    const passphrase =
+      (await this.sessionStore.get(this.instanceId, CloudApiProvider.FLOW_KEY_PASS)) ?? undefined;
+
+    let dec;
+    try {
+      dec = decryptFlowRequest(req.body, privateKey, passphrase);
+    } catch (e) {
+      if (!(e instanceof FlowDecryptionError)) throw e;
+      this.logger.warn(`[${this.instanceId}] Flow endpoint: ${e.message}`);
+      return { status: 421, body: '' };
+    }
+
+    const body = dec.body as {
+      version?: string;
+      action?: string;
+      screen?: string;
+      data?: Record<string, unknown>;
+      flow_token?: string;
+      flow_token_signature?: string;
+    };
+    const reply = (payload: unknown) => ({
+      status: 200,
+      body: encryptFlowResponse(payload, dec.aesKey, dec.iv),
+    });
+
+    // health check periódico da Meta.
+    if (body.action === 'ping') return reply({ data: { status: 'active' } });
+
+    // notificação de erro: o cliente não conseguiu processar a resposta anterior.
+    if (body.data && typeof body.data.error === 'string') {
+      await handlers.onClientError?.(body.flow_token, body.data);
+      return reply({ data: { acknowledged: true } });
+    }
+
+    try {
+      return reply(
+        await handlers.onExchange({
+          version: body.version,
+          action: body.action ?? '',
+          screen: body.screen,
+          data: body.data,
+          flowToken: body.flow_token,
+          ...(body.flow_token_signature ? { flowTokenSignature: body.flow_token_signature } : {}),
+        }),
+      );
+    } catch (e) {
+      if (e instanceof FlowTokenInvalidError) {
+        return reply427(e.message, dec.aesKey, dec.iv);
+      }
+      throw e;
+    }
+  }
+
+  // ── grupos da Cloud API (Groups API — exige OBA; máx. 8 participantes) ──
+  // Caminhos conforme a referência atual da Meta: o grupo é um nó próprio
+  // (`/{GROUP_ID}`), não um filho do número. ⚠️ Não validado contra conta real
+  // (a Groups API exige Official Business Account).
 
   async listCloudGroups(): Promise<GroupInfo[]> {
     const res = await this.http.get(`/${this.phoneNumberId}/groups`);
-    return (((res.data as { data?: unknown[] })?.data ?? []) as Record<string, unknown>[]).map(
-      (g) => this.toCloudGroup(g),
-    );
+    const body = res.data as { data?: { groups?: unknown[] } | unknown[] };
+    const list = Array.isArray(body?.data) ? body.data : (body?.data?.groups ?? []);
+    return (list as Record<string, unknown>[]).map((g) => this.toCloudGroup(g));
   }
 
   async getCloudGroup(groupId: string): Promise<GroupInfo> {
-    const res = await this.http.get(`/${this.phoneNumberId}/groups/${groupId}`);
-    return this.toCloudGroup(res.data as Record<string, unknown>);
+    const res = await this.http.get(`/${groupId}`);
+    return this.toCloudGroup({ id: groupId, ...(res.data as Record<string, unknown>) });
   }
 
-  async createCloudGroup(input: { subject: string; participants?: string[] }): Promise<GroupInfo> {
+  /** Participantes entram pelo link de convite — a criação não aceita lista. */
+  async createCloudGroup(input: { subject: string; description?: string }): Promise<GroupInfo> {
     const res = await this.http.post(`/${this.phoneNumberId}/groups`, {
       messaging_product: 'whatsapp',
       subject: input.subject,
-      ...(input.participants?.length
-        ? { participants: input.participants.map((p) => ({ user: this.toNumber(p) })) }
-        : {}),
+      ...(input.description ? { description: input.description } : {}),
     });
-    return this.toCloudGroup(res.data as Record<string, unknown>);
+    return this.toCloudGroup({ subject: input.subject, ...(res.data as Record<string, unknown>) });
   }
 
   async deleteCloudGroup(groupId: string): Promise<void> {
-    await this.http.delete(`/${this.phoneNumberId}/groups/${groupId}`);
+    await this.http.delete(`/${groupId}`);
   }
 
   async getCloudGroupInvite(groupId: string): Promise<{ code: string; url: string }> {
-    const res = await this.http.get(`/${this.phoneNumberId}/groups/${groupId}/invite`);
-    const code = (res.data as { invite_code?: string })?.invite_code ?? '';
-    return { code, url: code ? `https://chat.whatsapp.com/${code}` : '' };
+    const res = await this.http.get(`/${groupId}/invite_link`);
+    return this.toInvite(res.data);
   }
 
   async resetCloudGroupInvite(groupId: string): Promise<{ code: string; url: string }> {
-    const res = await this.http.post(`/${this.phoneNumberId}/groups/${groupId}/invite`, {
-      messaging_product: 'whatsapp',
-    });
-    const code = (res.data as { invite_code?: string })?.invite_code ?? '';
-    return { code, url: code ? `https://chat.whatsapp.com/${code}` : '' };
+    const res = await this.http.post(`/${groupId}/invite_link`, { messaging_product: 'whatsapp' });
+    return this.toInvite(res.data);
   }
 
   async removeCloudGroupParticipant(groupId: string, waId: string): Promise<void> {
-    await this.http.post(`/${this.phoneNumberId}/groups/${groupId}/participants`, {
-      messaging_product: 'whatsapp',
-      action: 'remove',
-      participants: [{ user: this.toNumber(waId) }],
+    await this.http.delete(`/${groupId}/participants`, {
+      data: { messaging_product: 'whatsapp', participants: [{ user: this.toNumber(waId) }] },
     });
+  }
+
+  private toInvite(data: unknown): { code: string; url: string } {
+    const url = (data as { invite_link?: string })?.invite_link ?? '';
+    return { code: url.split('/').pop() ?? '', url };
   }
 
   private toCloudGroup(g: Record<string, unknown>): GroupInfo {
@@ -763,7 +974,7 @@ export class CloudApiProvider extends BaseProvider {
     const res = await this.http.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: num,
+      ...this.addr(num),
       type: 'interactive',
       interactive: {
         type: 'call_permission_request',
@@ -839,6 +1050,72 @@ export class CloudApiProvider extends BaseProvider {
   }
 
   /**
+   * Converte a falha da Graph API em erro canônico, preservando o diagnóstico
+   * da Meta (`code`, `error_subcode`, `error_user_msg`, `error_data`,
+   * `fbtrace_id`). 401/403 da Meta são problema de credencial DA INSTÂNCIA, não
+   * do chamador — viram 502 pra não se confundir com apikey inválida.
+   */
+  private graphError(e: unknown): Error {
+    if (!axios.isAxiosError(e)) return e as Error;
+    const upstream = e.response?.status;
+    const ge = (e.response?.data as { error?: GraphErrorBody } | undefined)?.error;
+    if (!e.response) {
+      return new ProviderRequestError(
+        `Cloud API inacessível: ${e.message}`,
+        502,
+        'upstreamUnreachable',
+        this.type,
+      );
+    }
+    const status =
+      upstream === 429
+        ? 429
+        : upstream === 400 || upstream === 404
+          ? upstream
+          : upstream && upstream < 500 && upstream !== 401 && upstream !== 403
+            ? 422
+            : 502;
+    return new ProviderRequestError(
+      ge?.error_user_msg || ge?.message || `Cloud API respondeu HTTP ${upstream}`,
+      status,
+      ge?.code ?? `http_${upstream}`,
+      this.type,
+      {
+        upstreamStatus: upstream,
+        ...(ge?.type ? { type: ge.type } : {}),
+        ...(ge?.error_subcode != null ? { error_subcode: ge.error_subcode } : {}),
+        ...(ge?.error_user_title ? { error_user_title: ge.error_user_title } : {}),
+        ...(ge?.error_user_msg ? { error_user_msg: ge.error_user_msg } : {}),
+        ...(ge?.error_data ? { error_data: ge.error_data } : {}),
+        ...(ge?.message ? { message: ge.message } : {}),
+        ...(ge?.fbtrace_id ? { fbtrace_id: ge.fbtrace_id } : {}),
+      },
+    );
+  }
+
+  private warnedNoAppSecret = false;
+
+  /**
+   * Valida `X-Hub-Signature-256` (HMAC-SHA256 do corpo cru com o App Secret).
+   * Sem `appSecret` configurado não há como validar: aceita, mas avisa — a rota
+   * é pública e o id da instância é o único segredo nesse caso.
+   */
+  verifyInboundWebhook(meta: InboundWebhookMeta): boolean {
+    const secret = this.config.appSecret as string | undefined;
+    if (!secret) {
+      if (!this.warnedNoAppSecret) {
+        this.warnedNoAppSecret = true;
+        this.logger.warn(
+          `[${this.instanceId}] Cloud API sem appSecret (CLOUD_API_APP_SECRET / config.appSecret): ` +
+            'webhooks de entrada NÃO estão sendo autenticados.',
+        );
+      }
+      return true;
+    }
+    return verifySha256Signature(secret, meta.rawBody, meta.headers['x-hub-signature-256']);
+  }
+
+  /**
    * Webhook de entrada da Meta — roteado por `change.field`. Templates (fase 2),
    * Flows (4) e Calling (6) chegam pelo MESMO webhook, com `field` diferente;
    * cada fase pluga um `case` aqui.
@@ -868,6 +1145,29 @@ export class CloudApiProvider extends BaseProvider {
           case 'group_status_update':
             this.emitWebhook(WebhookEvent.GROUPS_UPDATE, change.value);
             break;
+          case 'flows':
+            this.emitWebhook(WebhookEvent.FLOW_STATUS_UPDATE, change.value);
+            break;
+          case 'smb_message_echoes':
+            this.handleEchoes(change.value);
+            break;
+          case 'account_update':
+          case 'account_alerts':
+          case 'account_review_update':
+          case 'business_capability_update':
+          case 'phone_number_quality_update':
+          case 'phone_number_name_update':
+          case 'security':
+          case 'user_preferences':
+          case 'message_template_components_update':
+          case 'business_username_updates':
+          case 'payment_configuration_update':
+            // cauda longa de conta/número: repassa com o nome do campo da Meta.
+            this.emitWebhook(WebhookEvent.ACCOUNT_UPDATE, {
+              field: change.field,
+              value: change.value,
+            });
+            break;
           case 'calls':
             this.handleCallsChange(change.value as { calls?: Record<string, unknown>[] });
             break;
@@ -883,42 +1183,137 @@ export class CloudApiProvider extends BaseProvider {
 
   // ── webhook: handlers por field ──────────────────────────────
 
-  /** `messages[]` (inbound) + `statuses[]` (sent/delivered/read/failed) no mesmo value. */
+  /** `messages[]` (inbound) + `statuses[]` (sent/delivered/read/played/failed) no mesmo value. */
   private handleMessagesChange(value?: CloudChangeValue): void {
-    const contactName = value?.contacts?.[0]?.profile?.name;
+    const contact = value?.contacts?.[0];
     for (const msg of value?.messages ?? []) {
-      // resposta de permissão de chamada chega como interactive sob messages.
-      if (msg.type === 'interactive' && msg.interactive?.type === 'call_permission_reply') {
-        this.emitWebhook(WebhookEvent.CALL_PERMISSION_REPLY, msg);
-        continue;
+      try {
+        this.handleInboundMessage(msg, contact);
+      } catch (e) {
+        // uma mensagem malformada não pode derrubar o resto do lote.
+        this.logger.error(`[cloud] mensagem ${msg?.id} não normalizada: ${(e as Error).message}`);
       }
-      this.emitTyped('message', this.normalize(msg, contactName));
     }
     for (const st of value?.statuses ?? []) {
+      const status = this.mapStatus(st.status);
+      if (!status) {
+        this.logger.debug(`[cloud] status desconhecido ignorado: ${st.status}`);
+        continue;
+      }
+      const err = st.errors?.[0];
       this.emitTyped('message.status', {
         provider: this.type,
         instanceId: this.instanceId,
         messageId: st.id,
-        chatId: st.recipient_id,
-        status: this.mapStatus(st.status),
+        // BSUID: `recipient_id` (telefone) pode vir omitido.
+        chatId: st.recipient_id ?? st.recipient_user_id ?? '',
+        status,
         timestamp: Number(st.timestamp ?? 0),
-        ...(st.errors?.length
+        ...(err
           ? {
               error: {
-                code: st.errors[0].code,
-                title: st.errors[0].title,
-                message: st.errors[0].message,
+                code: err.code,
+                title: err.title,
+                message: err.message,
+                ...(err.error_data?.details ? { details: err.error_data.details } : {}),
               },
             }
           : {}),
+        ...(st.pricing ? { pricing: st.pricing } : {}),
+        ...(st.biz_opaque_callback_data ? { callbackData: st.biz_opaque_callback_data } : {}),
+      });
+    }
+    // erros de nível de conta/número (fora de uma mensagem específica).
+    for (const e of value?.errors ?? []) {
+      this.emitWebhook(WebhookEvent.ERROR, {
+        message: e.message ?? e.title,
+        code: e.code,
+        details: e.error_data?.details,
+      });
+    }
+  }
+
+  /** Roteia UMA mensagem inbound: reação/edição/exclusão têm evento próprio. */
+  private handleInboundMessage(msg: CloudMessage, contact?: CloudContact): void {
+    const from = msg.from ?? msg.from_user_id ?? '';
+    const chatId = msg.group_id ?? from;
+    const ts = Number(msg.timestamp ?? 0);
+
+    if (msg.type === 'interactive' && msg.interactive?.type === 'call_permission_reply') {
+      this.emitWebhook(WebhookEvent.CALL_PERMISSION_REPLY, msg);
+      return;
+    }
+    if (msg.type === 'reaction' && msg.reaction?.message_id) {
+      this.emitWebhook(WebhookEvent.MESSAGE_REACTION, {
+        provider: this.type,
+        instanceId: this.instanceId,
+        messageId: msg.reaction.message_id,
+        chatId,
+        from,
+        fromMe: false,
+        emoji: msg.reaction.emoji ?? '', // vazio = reação removida
+        timestamp: ts,
+      } satisfies NormalizedReaction);
+      return;
+    }
+    // edição/exclusão feitas pelo usuário (coexistência com o app Business).
+    if (msg.type === 'revoke') {
+      this.emitWebhook(WebhookEvent.MESSAGE_DELETED, {
+        provider: this.type,
+        instanceId: this.instanceId,
+        messageId: msg.revoke?.original_message_id ?? msg.id,
+        chatId,
+        fromMe: false,
+        timestamp: ts,
+      } satisfies NormalizedDeletion);
+      return;
+    }
+    if (msg.type === 'edit') {
+      this.emitWebhook(WebhookEvent.MESSAGE_EDITED, {
+        provider: this.type,
+        instanceId: this.instanceId,
+        messageId: msg.edit?.original_message_id ?? msg.id,
+        chatId,
+        from,
+        fromMe: false,
+        text: msg.edit?.message?.text?.body ?? msg.text?.body ?? '',
+        timestamp: ts,
+      } satisfies NormalizedEdit);
+      return;
+    }
+    this.emitTyped('message', this.normalize(msg, contact));
+  }
+
+  /**
+   * Coexistência: mensagens enviadas pelo app WhatsApp Business do mesmo
+   * número chegam como eco — viram `message.sent`, com o chat no destinatário.
+   */
+  private handleEchoes(value?: CloudChangeValue): void {
+    for (const msg of value?.message_echoes ?? []) {
+      const to = msg.to ?? msg.to_user_id ?? '';
+      this.emitWebhook(WebhookEvent.MESSAGE_SENT, {
+        ...this.normalize(msg),
+        chatId: msg.group_id ?? to,
+        fromMe: true,
       });
     }
   }
 
   // ── helpers ───────────────────────────────────────────────
 
+  /**
+   * Destinatário como a Cloud espera: dígitos do telefone, ou o BSUID
+   * (Business-Scoped User ID, ex.: `US.1349…`) intacto — a Meta pode entregar
+   * só o BSUID quando o usuário não expõe o número.
+   */
   private toNumber(to: string): string {
-    return to.replace(/\D/g, '');
+    const v = to.trim();
+    return BSUID_RE.test(v) ? v : v.replace(/\D/g, '');
+  }
+
+  /** Campo de destino do envio: `to` (telefone) ou `recipient` (BSUID). */
+  private addr(to: string): { to: string } | { recipient: string } {
+    return BSUID_RE.test(to) ? { recipient: to } : { to };
   }
 
   /** Envelope `context` para reply/quote (mesmo formato em todos os tipos). */
@@ -926,7 +1321,7 @@ export class CloudApiProvider extends BaseProvider {
     return quotedMessageId ? { context: { message_id: quotedMessageId } } : {};
   }
 
-  private mapStatus(s?: string): MessageAckStatus {
+  private mapStatus(s?: string): MessageAckStatus | undefined {
     switch (s) {
       case 'sent':
         return MessageAckStatus.SERVER;
@@ -934,10 +1329,13 @@ export class CloudApiProvider extends BaseProvider {
         return MessageAckStatus.DELIVERED;
       case 'read':
         return MessageAckStatus.READ;
+      case 'played':
+        return MessageAckStatus.PLAYED;
       case 'failed':
         return MessageAckStatus.FAILED;
       default:
-        return MessageAckStatus.PENDING;
+        // status novo/desconhecido: ignorar — nunca rebaixar o ack para pending.
+        return undefined;
     }
   }
 
@@ -950,11 +1348,15 @@ export class CloudApiProvider extends BaseProvider {
     };
   }
 
-  private normalize(msg: CloudMessage, pushName?: string): NormalizedMessage {
+  private normalize(msg: CloudMessage, contact?: CloudContact): NormalizedMessage {
     let type = MessageType.UNKNOWN;
     let text: string | undefined;
     let media: NormalizedMessage['media'];
     let location: NormalizedMessage['location'];
+    let flowResponse: FlowResponse | undefined;
+    let interactiveReply: NormalizedMessage['interactiveReply'];
+    let contacts: NormalizedMessage['contacts'];
+    let order: NormalizedMessage['order'];
 
     switch (msg.type) {
       case 'text':
@@ -968,15 +1370,21 @@ export class CloudApiProvider extends BaseProvider {
         break;
       case 'video':
         type = MessageType.VIDEO;
-        media = { mimetype: msg.video?.mime_type, caption: msg.video?.caption };
+        text = msg.video?.caption;
+        media = { mimetype: msg.video?.mime_type, caption: text };
         break;
       case 'audio':
         type = MessageType.AUDIO;
-        media = { mimetype: msg.audio?.mime_type };
+        media = { mimetype: msg.audio?.mime_type, ...(msg.audio?.voice ? { isPtt: true } : {}) };
         break;
       case 'document':
         type = MessageType.DOCUMENT;
-        media = { mimetype: msg.document?.mime_type, filename: msg.document?.filename };
+        text = msg.document?.caption;
+        media = {
+          mimetype: msg.document?.mime_type,
+          filename: msg.document?.filename,
+          caption: text,
+        };
         break;
       case 'sticker':
         type = MessageType.STICKER;
@@ -993,41 +1401,126 @@ export class CloudApiProvider extends BaseProvider {
           };
         }
         break;
-      case 'interactive':
+      case 'contacts':
+        type = MessageType.CONTACT;
+        contacts = (msg.contacts ?? []).map((c) => ({
+          name: c.name?.formatted_name,
+          phones: (c.phones ?? []).map((p) => p.wa_id ?? p.phone ?? '').filter(Boolean),
+        }));
+        text =
+          contacts
+            .map((c) => c.name)
+            .filter(Boolean)
+            .join(', ') || undefined;
+        break;
+      case 'interactive': {
         // resposta de botão/lista/flow — o texto vira o título/valor selecionado.
         type = MessageType.INTERACTIVE;
-        text =
-          msg.interactive?.button_reply?.title ??
-          msg.interactive?.list_reply?.title ??
-          msg.interactive?.nfm_reply?.body;
+        const i = msg.interactive;
+        text = i?.button_reply?.title ?? i?.list_reply?.title ?? i?.nfm_reply?.body;
+        if (i?.button_reply) interactiveReply = { type: 'button', ...i.button_reply };
+        else if (i?.list_reply) interactiveReply = { type: 'list', ...i.list_reply };
+        if (i?.nfm_reply) flowResponse = parseNfmReply(i.nfm_reply);
         break;
+      }
       case 'button':
         // quick-reply de TEMPLATE (diferente de interactive.button_reply).
         type = MessageType.INTERACTIVE;
         text = msg.button?.text;
+        interactiveReply = {
+          type: 'template_button',
+          id: msg.button?.payload,
+          title: msg.button?.text,
+        };
+        break;
+      case 'order':
+        type = MessageType.ORDER;
+        order = msg.order;
+        text = msg.order?.text as string | undefined;
+        break;
+      case 'system':
+        // ex.: user_changed_number / user_changed_user_id — detalhes em `raw`.
+        type = MessageType.SYSTEM;
+        text = msg.system?.body;
+        break;
+      case 'unsupported':
+        // a Meta informa o tipo original que a Cloud API não entrega.
+        text = msg.unsupported?.type ? `[não suportado: ${msg.unsupported.type}]` : undefined;
         break;
     }
 
+    // BSUID: `from` (telefone) pode vir omitido — cai no id com escopo de negócio.
+    const from = msg.from ?? msg.from_user_id ?? '';
+    const userId = msg.from_user_id ?? contact?.user_id;
+    const ref = msg.referral;
     return {
       provider: this.type,
       instanceId: this.instanceId,
       id: msg.id,
-      chatId: msg.from,
-      from: msg.from,
+      chatId: msg.group_id ?? from,
+      from,
       fromMe: false,
-      pushName,
-      isGroup: false, // Cloud API não trata grupos da mesma forma
+      pushName: contact?.profile?.name,
+      isGroup: !!msg.group_id,
       timestamp: Number(msg.timestamp ?? 0),
       type,
       text,
       media,
       location,
+      ...(flowResponse ? { flowResponse } : {}),
+      ...(interactiveReply ? { interactiveReply } : {}),
+      ...(contacts ? { contacts } : {}),
+      ...(order ? { order } : {}),
+      ...(msg.context?.id ? { quotedMessageId: msg.context.id } : {}),
+      ...(msg.context?.from ? { quotedParticipant: msg.context.from } : {}),
+      ...(msg.context?.forwarded || msg.context?.frequently_forwarded ? { forwarded: true } : {}),
+      ...(ref
+        ? {
+            referral: {
+              sourceUrl: ref.source_url,
+              sourceId: ref.source_id,
+              sourceType: ref.source_type,
+              headline: ref.headline,
+              body: ref.body,
+              mediaType: ref.media_type,
+              ctwaClid: ref.ctwa_clid,
+            },
+          }
+        : {}),
+      ...(msg.from || userId
+        ? {
+            identity: {
+              ...(msg.from ? { phone: msg.from } : {}),
+              ...(userId ? { userId } : {}),
+              ...(contact?.profile?.username ? { username: contact.profile.username } : {}),
+              primary: 'pn' as const,
+            },
+          }
+        : {}),
       raw: msg,
     };
   }
 }
 
+/** 427: a Meta mostra `error_msg` ao usuário e encerra o Flow. */
+function reply427(message: string, aesKey: Buffer, iv: Buffer): { status: number; body: string } {
+  return { status: 427, body: encryptFlowResponse({ error_msg: message }, aesKey, iv) };
+}
+
+/** Business-Scoped User ID: `<PAÍS>.<id>` ou `<PAÍS>.ENT.<id>` (id pai). */
+const BSUID_RE = /^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{6,128}$/;
+
 // ── tipos parciais do payload da Meta ────────────────────────
+interface GraphErrorBody {
+  message?: string;
+  type?: string;
+  code?: number;
+  error_subcode?: number;
+  error_user_title?: string;
+  error_user_msg?: string;
+  error_data?: unknown;
+  fbtrace_id?: string;
+}
 interface CloudSendResponse {
   messages?: { id: string }[];
 }
@@ -1039,16 +1532,28 @@ interface CloudMediaRef {
 }
 interface CloudMessage {
   id: string;
-  from: string;
+  /** telefone do remetente — pode vir OMITIDO (BSUID). */
+  from?: string;
+  from_user_id?: string;
+  /** só em ecos (coexistência). */
+  to?: string;
+  to_user_id?: string;
+  /** mensagens de grupo (Groups API). */
+  group_id?: string;
   timestamp?: string;
   type: string;
   text?: { body: string };
   image?: CloudMediaRef;
   video?: CloudMediaRef;
-  audio?: CloudMediaRef;
+  audio?: CloudMediaRef & { voice?: boolean };
   document?: CloudMediaRef;
   sticker?: CloudMediaRef;
   location?: { latitude: number; longitude: number; name?: string; address?: string };
+  contacts?: {
+    name?: { formatted_name?: string };
+    phones?: { phone?: string; wa_id?: string }[];
+  }[];
+  reaction?: { message_id?: string; emoji?: string };
   interactive?: {
     type?: string;
     button_reply?: { id?: string; title?: string };
@@ -1056,18 +1561,50 @@ interface CloudMessage {
     nfm_reply?: { name?: string; body?: string; response_json?: string };
   };
   button?: { text?: string; payload?: string };
+  order?: Record<string, unknown>;
+  system?: { body?: string; type?: string };
+  unsupported?: { type?: string };
+  edit?: { original_message_id?: string; message?: { text?: { body?: string } } };
+  revoke?: { original_message_id?: string };
+  context?: { id?: string; from?: string; forwarded?: boolean; frequently_forwarded?: boolean };
+  referral?: {
+    source_url?: string;
+    source_id?: string;
+    source_type?: string;
+    headline?: string;
+    body?: string;
+    media_type?: string;
+    ctwa_clid?: string;
+  };
+}
+interface CloudError {
+  code?: number;
+  title?: string;
+  message?: string;
+  error_data?: { details?: string };
 }
 interface CloudStatus {
   id: string;
   status?: string;
   timestamp?: string;
-  recipient_id: string;
-  errors?: { code?: number; title?: string; message?: string }[];
+  /** telefone do destinatário — pode vir OMITIDO (envio para BSUID). */
+  recipient_id?: string;
+  recipient_user_id?: string;
+  errors?: CloudError[];
+  pricing?: Record<string, unknown>;
+  biz_opaque_callback_data?: string;
+}
+interface CloudContact {
+  profile?: { name?: string; username?: string };
+  wa_id?: string;
+  user_id?: string;
 }
 interface CloudChangeValue {
-  contacts?: { profile?: { name?: string } }[];
+  contacts?: CloudContact[];
   messages?: CloudMessage[];
   statuses?: CloudStatus[];
+  message_echoes?: CloudMessage[];
+  errors?: CloudError[];
 }
 interface CloudWebhookBody {
   entry?: {

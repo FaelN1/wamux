@@ -1,8 +1,4 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Repository } from 'typeorm';
@@ -79,11 +75,7 @@ export class InstanceService {
     return this.repo.findOne({ where: { apiKey } });
   }
 
-  async updateStatus(
-    id: string,
-    status: ConnectionStatus,
-    wid?: string | null,
-  ): Promise<void> {
+  async updateStatus(id: string, status: ConnectionStatus, wid?: string | null): Promise<void> {
     await this.repo.update({ id }, { status, ...(wid !== undefined ? { wid } : {}) });
   }
 
@@ -91,7 +83,11 @@ export class InstanceService {
     await this.repo.update({ id }, { provider });
   }
 
-  async setWebhook(id: string, url: string | undefined, events: string[] = []): Promise<InstanceEntity> {
+  async setWebhook(
+    id: string,
+    url: string | undefined,
+    events: string[] = [],
+  ): Promise<InstanceEntity> {
     await this.findOne(id);
     // URL vazia/omitida desabilita o webhook (webhookUrl = null).
     await this.repo.update({ id }, { webhookUrl: url?.trim() || null, webhookEvents: events });
@@ -156,6 +152,15 @@ export class InstanceService {
   async setAntiBan(id: string, patch: Record<string, unknown>): Promise<InstanceEntity> {
     const inst = await this.findOne(id);
     inst.config = { ...inst.config, antiBan: { ...(inst.config.antiBan as object), ...patch } };
+    return this.repo.save(inst);
+  }
+
+  /** Merge raso de um patch em `config` (chave com `null` é removida). */
+  async patchConfig(id: string, patch: Record<string, unknown>): Promise<InstanceEntity> {
+    const inst = await this.findOne(id);
+    const next: Record<string, unknown> = { ...inst.config, ...patch };
+    for (const [k, v] of Object.entries(patch)) if (v === null) delete next[k];
+    inst.config = next;
     return this.repo.save(inst);
   }
 

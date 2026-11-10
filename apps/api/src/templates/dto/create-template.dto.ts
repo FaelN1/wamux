@@ -45,8 +45,10 @@ export class CreateTemplateDto {
   parameter_format?: 'POSITIONAL' | 'NAMED';
 
   @ApiPropertyOptional({
-    description: 'Permite que a Meta reclassifique a categoria durante o review.',
-    example: true,
+    deprecated: true,
+    description:
+      'Ignorado: a Meta deixou de aceitar `allow_category_change` em 2025-04-09 (a ' +
+      'recategorização passou a ser automática). Aceito só para não quebrar clientes antigos.',
   })
   @IsOptional()
   @IsBoolean()

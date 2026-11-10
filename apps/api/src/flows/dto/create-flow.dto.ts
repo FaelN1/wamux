@@ -41,7 +41,7 @@ export class CreateFlowDto {
   /** flow JSON como string opaca. */
   @ApiPropertyOptional({
     description: 'Flow JSON como string opaca (define as telas do formulário).',
-    example: '{"version":"5.0","screens":[]}',
+    example: '{"version":"7.3","screens":[]}',
   })
   @IsOptional()
   @IsString()

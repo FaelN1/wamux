@@ -50,6 +50,10 @@ export interface PhoneNumberInfo {
   messaging_limit_tier?: string;
   throughput?: unknown;
   platform_type?: string;
+  /** diagnóstico da Meta: o número pode enviar? o que o limita? */
+  health_status?: unknown;
+  /** override de webhook configurado para este número. */
+  webhook_configuration?: unknown;
 }
 
 export interface RequestCodeInput {
@@ -71,11 +75,22 @@ export interface MessagingAnalyticsQuery {
   countryCodes?: string[];
 }
 
-export interface ConversationAnalyticsQuery {
+/**
+ * `pricing_analytics` — custo/volume por mensagem. Substitui o antigo
+ * `conversation_analytics`, desligado pela Meta em 2026-11-01.
+ */
+export interface PricingAnalyticsQuery {
   start: number;
   end: number;
   granularity?: 'HALF_HOUR' | 'DAILY' | 'MONTHLY';
+  phoneNumbers?: string[];
+  countryCodes?: string[];
+  /** COST | VOLUME */
   metricTypes?: string[];
-  conversationCategories?: string[];
+  /** REGULAR | FREE_CUSTOMER_SERVICE | FREE_ENTRY_POINT */
+  pricingTypes?: string[];
+  /** MARKETING | UTILITY | AUTHENTICATION | SERVICE … */
+  pricingCategories?: string[];
+  /** COUNTRY | PHONE | PRICING_CATEGORY | PRICING_TYPE | TIER */
   dimensions?: string[];
 }

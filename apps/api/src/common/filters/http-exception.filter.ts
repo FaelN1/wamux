@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { ProviderRequestError } from '../../providers/provider.interface';
 
 /**
  * Filtro global: converte qualquer erro em uma resposta JSON consistente e
@@ -21,15 +22,29 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+    // Erro da fonte da engine (Meta/sidecar): repassa status + código + detalhes.
+    if (exception instanceof ProviderRequestError) {
+      if (exception.status >= 500) {
+        this.logger.error(`${request.method} ${request.url} — ${exception.message}`);
+      }
+      response.status(exception.status).json({
+        statusCode: exception.status,
+        path: request.url,
+        timestamp: new Date().toISOString(),
+        error: {
+          message: exception.message,
+          code: exception.code,
+          provider: exception.provider,
+          ...(exception.details ? { details: exception.details } : {}),
+        },
+      });
+      return;
+    }
 
-    const payload =
-      exception instanceof HttpException
-        ? exception.getResponse()
-        : 'Erro interno';
+    const status =
+      exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const payload = exception instanceof HttpException ? exception.getResponse() : 'Erro interno';
 
     if (status >= 500) {
       this.logger.error(

@@ -50,12 +50,16 @@ import {
   RequestCodeInput,
   RegisterNumberInput,
   MessagingAnalyticsQuery,
-  ConversationAnalyticsQuery,
+  PricingAnalyticsQuery,
   Flow,
   CreateFlowInput,
   CreateFlowResult,
   SendFlowInput,
-  FlowMetricsQuery,
+  FlowAsset,
+  FlowDataExchangeRequest,
+  FlowEncryptionInfo,
+  SetFlowEncryptionInput,
+  UpdateFlowMetadataInput,
   ConnectCallInput,
   ProviderCapabilities,
   ProviderType,
@@ -144,6 +148,63 @@ export interface ProviderContext {
   identityMode?: IdentityMode;
 }
 
+/**
+ * Dados da requisição HTTP de um webhook de ENTRADA, repassados ao adapter
+ * para que ELE autentique a origem (cada fonte assina de um jeito).
+ */
+export interface InboundWebhookMeta {
+  /** headers HTTP (chaves em minúsculas, como o Node entrega). */
+  headers: Record<string, string | string[] | undefined>;
+  /** corpo cru (bytes) — base do HMAC. `undefined` se não foi capturado. */
+  rawBody?: Buffer;
+}
+
+/** Requisição HTTP crua que chegou ao endpoint de troca de dados de um Flow. */
+export interface FlowEndpointHttpRequest extends InboundWebhookMeta {
+  body: unknown;
+}
+
+/**
+ * Callbacks de negócio do endpoint de Flow. O adapter cuida do protocolo
+ * (assinatura, criptografia, ping, notificação de erro); o serviço só decide
+ * a próxima tela e registra a execução.
+ */
+export interface FlowEndpointHandlers {
+  /** INIT / BACK / data_exchange → corpo da resposta (próxima tela ou conclusão). */
+  onExchange(req: Omit<FlowDataExchangeRequest, 'instanceId'>): Promise<Record<string, unknown>>;
+  /** O cliente WhatsApp reportou um erro ao processar a resposta anterior. */
+  onClientError?(flowToken: string | undefined, error: Record<string, unknown>): Promise<void>;
+}
+
+/** Lançado por `onExchange` quando o flow_token é inválido/expirado (→ HTTP 427 para a Meta). */
+export class FlowTokenInvalidError extends Error {
+  constructor(message = 'flow_token inválido ou expirado') {
+    super(message);
+    this.name = 'FlowTokenInvalidError';
+  }
+}
+
+/**
+ * Erro devolvido pela FONTE da engine (Graph API da Meta, sidecar…) numa
+ * chamada feita em nome do cliente. Canônico: o filtro HTTP global o converte
+ * em resposta com `status` e expõe `code`/`details` — em vez de um 500 opaco.
+ */
+export class ProviderRequestError extends Error {
+  constructor(
+    message: string,
+    /** status HTTP a devolver ao cliente do gateway. */
+    readonly status: number,
+    /** código estável do erro (o da fonte, quando existe). */
+    readonly code: string | number,
+    readonly provider: ProviderType,
+    /** detalhes da fonte (subcódigo, mensagem ao usuário, id de rastreio…). */
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'ProviderRequestError';
+  }
+}
+
 /** Lançado quando a engine não entrega o recurso interativo pedido (→ HTTP 422). */
 export class InteractiveUnsupportedError extends Error {
   readonly code = 'interactiveUnsupported';
@@ -208,6 +269,13 @@ export interface WhatsAppProvider {
    */
   handleInboundWebhook(payload: unknown, meta?: Record<string, unknown>): Promise<void>;
 
+  /**
+   * Autentica a ORIGEM de um webhook de entrada (assinatura HMAC do corpo cru).
+   * `false` → o controller responde 401 e o payload NÃO é processado. Adapters
+   * que recebem por socket não implementam.
+   */
+  verifyInboundWebhook?(meta: InboundWebhookMeta): boolean;
+
   /** A engine suporta export/import de credenciais MD (trocar engine sem QR)? */
   readonly portableCredentials: boolean;
   /** Exporta a identidade do device (Multi-Device) em formato canônico. */
@@ -235,7 +303,8 @@ export interface WhatsAppProvider {
   fetchMessages?(chatId: string, opts: FetchMessagesOptions): Promise<FetchMessagesPage>;
   /** checagem "crua" — o gating anti-ban fica no serviço, não aqui. */
   checkNumbers?(numbers: string[]): Promise<NumberCheckResult[]>;
-  markRead?(chatId: string, messageIds?: string[]): Promise<void>;
+  /** `typing`: exibe "digitando…" junto da confirmação de leitura, onde a engine suporta. */
+  markRead?(chatId: string, messageIds?: string[], opts?: { typing?: boolean }): Promise<void>;
 
   // ── mídia ─────────────────────────────────────────
   /** Baixa a mídia de uma mensagem recebida, em STREAMING. `null` se não houver. */
@@ -319,7 +388,10 @@ export interface WhatsAppProvider {
   listSubscribedApps?(): Promise<unknown>;
   unsubscribeApp?(): Promise<void>;
   messagingAnalytics?(query: MessagingAnalyticsQuery): Promise<unknown>;
-  conversationAnalytics?(query: ConversationAnalyticsQuery): Promise<unknown>;
+  pricingAnalytics?(query: PricingAnalyticsQuery): Promise<unknown>;
+  /** Aponta o webhook do número para uma URL própria (override por número). */
+  setWebhookOverride?(input: { callbackUri: string; verifyToken: string }): Promise<void>;
+  clearWebhookOverride?(): Promise<void>;
 
   // ── avatar de contato arbitrário (gated por capabilities.contactAvatar) ──
   /** Foto de perfil de QUALQUER jid (contato/grupo) — usado pelo refetch lazy do Inbox. `undefined` sem foto/privacidade restringindo, nunca erro. */
@@ -372,12 +444,27 @@ export interface WhatsAppProvider {
   deprecateFlow?(id: string): Promise<void>;
   deleteFlow?(id: string): Promise<void>;
   sendFlow?(input: SendFlowInput): Promise<SendResult>;
-  flowMetrics?(id: string, query: FlowMetricsQuery): Promise<unknown>;
+  /** Atualiza nome/categorias/endpoint_uri/app (o Flow JSON vai por `updateFlowJson`). */
+  updateFlowMetadata?(id: string, input: UpdateFlowMetadataInput): Promise<void>;
+  /** Assets do Flow (o Flow JSON vigente, com URL temporária de download). */
+  listFlowAssets?(id: string): Promise<FlowAsset[]>;
+  /** Estado da chave pública registrada para o número + se há chave privada local. */
+  getFlowEncryption?(): Promise<FlowEncryptionInfo>;
+  /** Gera/importa o par de chaves e registra a pública na Meta. */
+  setFlowEncryption?(input: SetFlowEncryptionInput): Promise<FlowEncryptionInfo>;
+  /**
+   * Endpoint de troca de dados (Data API): autentica, decifra, delega a decisão
+   * e devolve a resposta JÁ cifrada com o status HTTP que o protocolo exige.
+   */
+  handleFlowEndpoint?(
+    req: FlowEndpointHttpRequest,
+    handlers: FlowEndpointHandlers,
+  ): Promise<{ status: number; body: string }>;
 
   // ── grupos da Cloud API (gated por capabilities.cloudGroups — Cloud-only) ──
   listCloudGroups?(): Promise<GroupInfo[]>;
   getCloudGroup?(groupId: string): Promise<GroupInfo>;
-  createCloudGroup?(input: { subject: string; participants?: string[] }): Promise<GroupInfo>;
+  createCloudGroup?(input: { subject: string; description?: string }): Promise<GroupInfo>;
   deleteCloudGroup?(groupId: string): Promise<void>;
   getCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
   resetCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;

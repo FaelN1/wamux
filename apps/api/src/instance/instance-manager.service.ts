@@ -19,6 +19,7 @@ import { RiskMonitorService } from '../throttle/risk-monitor.service';
 import { MediaService } from '../media/media.service';
 import { InboxStoreService } from '../inbox/inbox-store.service';
 import { ActivityLogService } from '../activity-log/activity-log.service';
+import { FlowSessionService } from '../flow-sessions/flow-session.service';
 import { ActivityLogStatus, ActivityLogType } from '@wamux/shared';
 import { AntiBanConfig } from '@wamux/shared';
 import { ProviderFactory } from '../providers/provider.factory';
@@ -75,6 +76,7 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     private readonly media: MediaService,
     private readonly inboxStore: InboxStoreService,
     private readonly activityLog: ActivityLogService,
+    private readonly flowSessions: FlowSessionService,
   ) {}
 
   /** Registra um sinal de risco e emite ANTIBAN_ALERT se armar o freio. */
@@ -248,6 +250,34 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
       message: m.text || m.media?.caption || m.type,
     });
     this.fanOut(m.instanceId, WebhookEvent.MESSAGE_RECEIVED, m);
+
+    // 5) resposta de Flow: fecha a sessão (correlação pelo flowToken) e emite o
+    // evento dedicado. Fica DEPOIS do dedup — reentrega não duplica o evento.
+    if (m.flowResponse && !m.fromMe) {
+      const contact = m.from.replace(/@.*$/, '').replace(/\D/g, '');
+      await this.flowSessions.complete(m.instanceId, m.flowResponse, {
+        messageId: m.id,
+        contact,
+      });
+      const session = m.flowResponse.flowToken
+        ? await this.flowSessions.get(m.instanceId, m.flowResponse.flowToken)
+        : null;
+      this.fanOut(m.instanceId, WebhookEvent.FLOW_RESPONSE, {
+        provider: m.provider,
+        instanceId: m.instanceId,
+        messageId: m.id,
+        chatId: m.chatId,
+        from: m.from,
+        timestamp: m.timestamp,
+        flowToken: m.flowResponse.flowToken,
+        name: m.flowResponse.name,
+        data: m.flowResponse.data,
+        // correlação com o envio (null quando o Flow não saiu por este gateway).
+        flowId: session?.flowId ?? null,
+        flowName: session?.flowName ?? null,
+        sentMessageId: session?.messageId ?? null,
+      });
+    }
   }
 
   // ── política de reconexão ─────────────────────────

@@ -46,15 +46,18 @@ export class ProviderFactory {
     identityMode: IdentityMode = 'auto',
   ): ProviderContext {
     const cloudApi = this.config.get<Record<string, string>>('cloudApi') ?? {};
-    const whatsmeow = this.config.get<Record<string, string>>('whatsmeow') ?? {};
+    const whatsmeow = this.config.get<Record<string, unknown>>('whatsmeow') ?? {};
     const device = this.settings.get().device;
 
     const config: Record<string, unknown> = {
       cloudApiBaseUrl: cloudApi.baseUrl,
       cloudApiVersion: cloudApi.version,
+      // vazio = sem validação de assinatura (o adapter avisa no log).
+      ...(cloudApi.appSecret ? { appSecret: cloudApi.appSecret } : {}),
       whatsmeowUrl: whatsmeow.url,
       whatsmeowMasterKey: whatsmeow.masterKey,
       whatsmeowCallbackBaseUrl: whatsmeow.callbackBaseUrl,
+      whatsmeowRequireSignature: whatsmeow.requireSignature !== false,
       // Identidade no WhatsApp ("Aparelhos conectados") — lida a cada spawn,
       // então mudanças no painel valem no próximo connect.
       deviceClient: device.client,

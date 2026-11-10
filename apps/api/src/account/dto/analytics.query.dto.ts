@@ -48,8 +48,8 @@ export class MessagingAnalyticsQueryDto {
   countryCodes?: string;
 }
 
-/** Analytics de conversas (custo/volume). */
-export class ConversationAnalyticsQueryDto {
+/** Analytics de preço por mensagem (custo/volume) — `pricing_analytics`. */
+export class PricingAnalyticsQueryDto {
   @ApiProperty({ description: 'Início da janela (epoch em segundos, UNIX).', example: 1717200000 })
   @Type(() => Number)
   @IsNumber()
@@ -70,24 +70,42 @@ export class ConversationAnalyticsQueryDto {
   granularity?: 'HALF_HOUR' | 'DAILY' | 'MONTHLY';
 
   @ApiPropertyOptional({
-    description: 'Métricas desejadas (ex.: COST, CONVERSATION), separadas por vírgula.',
-    example: 'COST,CONVERSATION',
+    description: 'Métricas desejadas (COST, VOLUME), separadas por vírgula.',
+    example: 'COST,VOLUME',
   })
   @IsOptional()
   @IsString()
   metricTypes?: string;
 
   @ApiPropertyOptional({
-    description: 'Categorias de conversa (ex.: MARKETING, UTILITY), separadas por vírgula.',
+    description: 'Categorias de preço (ex.: MARKETING, UTILITY, AUTHENTICATION, SERVICE).',
     example: 'MARKETING,UTILITY',
   })
   @IsOptional()
   @IsString()
-  conversationCategories?: string;
+  pricingCategories?: string;
 
   @ApiPropertyOptional({
-    description: 'Dimensões de agrupamento (ex.: CONVERSATION_CATEGORY), separadas por vírgula.',
-    example: 'CONVERSATION_CATEGORY,COUNTRY',
+    description: 'Tipos de preço (ex.: REGULAR, FREE_CUSTOMER_SERVICE, FREE_ENTRY_POINT).',
+    example: 'REGULAR',
+  })
+  @IsOptional()
+  @IsString()
+  pricingTypes?: string;
+
+  @ApiPropertyOptional({ description: 'Números da WABA, separados por vírgula.' })
+  @IsOptional()
+  @IsString()
+  phoneNumbers?: string;
+
+  @ApiPropertyOptional({ description: 'Países (ISO-2), separados por vírgula.', example: 'BR' })
+  @IsOptional()
+  @IsString()
+  countryCodes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Dimensões (COUNTRY, PHONE, PRICING_CATEGORY, PRICING_TYPE, TIER).',
+    example: 'PRICING_CATEGORY,COUNTRY',
   })
   @IsOptional()
   @IsString()

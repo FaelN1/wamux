@@ -1,4 +1,5 @@
 import { ConnectionStatus, MessageAckStatus, MessageType, ProviderType } from './enums';
+import type { FlowResponse } from './flows';
 
 // ── identidade (@lid vs @jid) ───────────────────────
 
@@ -16,6 +17,13 @@ export interface Identity {
   pnJid?: string;
   /** número em dígitos (E.164 sem '+'), quando conhecido. */
   phone?: string;
+  /**
+   * Business-Scoped User ID da Cloud API (ex.: `US.1349…`). Estável por
+   * portfólio de negócio; é o ÚNICO identificador quando a Meta omite o número.
+   */
+  userId?: string;
+  /** @username do WhatsApp, quando o usuário tem um (Cloud API). */
+  username?: string;
   /** qual identificador ancora a dedup: 'lid' quando presente, senão 'pn'. */
   primary: 'lid' | 'pn';
 }
@@ -89,12 +97,57 @@ export interface NormalizedMessage {
   text?: string;
   media?: NormalizedMedia;
   location?: { latitude: number; longitude: number; name?: string; address?: string };
+  /** resposta de um WhatsApp Flow concluído (`nfm_reply`), já parseada. */
+  flowResponse?: FlowResponse;
+  /** id da mensagem citada (reply), quando esta mensagem responde a outra. */
+  quotedMessageId?: string;
+  /** autor da mensagem citada (jid/número), quando a engine informa. */
+  quotedParticipant?: string;
+  /** jids mencionados (@) no texto. */
+  mentions?: string[];
+  /** a mensagem foi encaminhada. */
+  forwarded?: boolean;
+  /** clique em botão / item de lista / quick-reply de template. */
+  interactiveReply?: InteractiveReply;
+  /** cartões de contato recebidos (type = contact). */
+  contacts?: ReceivedContact[];
+  /** pedido de catálogo recebido (type = order) — payload da engine. */
+  order?: Record<string, unknown>;
+  /** origem em anúncio Click-to-WhatsApp. */
+  referral?: MessageReferral;
   /** identidade canônica do remetente (unifica lid/pn). Preenchida pelos adapters. */
   identity?: Identity;
   /** identidade do chat, quando distinta do remetente (1:1 = a mesma). */
   chatIdentity?: Identity;
   /** payload cru do provider, para depuração / campos não mapeados. */
   raw: unknown;
+}
+
+/** Escolha do usuário numa mensagem interativa. `id` é o que você definiu no envio. */
+export interface InteractiveReply {
+  type: 'button' | 'list' | 'template_button';
+  id?: string;
+  title?: string;
+  description?: string;
+}
+
+export interface ReceivedContact {
+  name?: string;
+  phones?: string[];
+  /** vCard cru, quando a engine entrega (Baileys/whatsmeow). */
+  vcard?: string;
+}
+
+/** Anúncio que originou a conversa (Click-to-WhatsApp). */
+export interface MessageReferral {
+  sourceUrl?: string;
+  sourceId?: string;
+  sourceType?: string;
+  headline?: string;
+  body?: string;
+  mediaType?: string;
+  /** click id para atribuição (Conversions API). */
+  ctwaClid?: string;
 }
 
 export interface MessageStatusUpdate {
@@ -105,7 +158,11 @@ export interface MessageStatusUpdate {
   status: MessageAckStatus;
   timestamp: number;
   /** preenchido quando status = failed (ex.: Cloud API traz code/title/message). */
-  error?: { code?: number; title?: string; message?: string };
+  error?: { code?: number; title?: string; message?: string; details?: string };
+  /** cobrança da mensagem (Cloud API): modelo, tipo e categoria. */
+  pricing?: Record<string, unknown>;
+  /** `biz_opaque_callback_data` informado no envio, ecoado pela Meta. */
+  callbackData?: string;
 }
 
 export interface ConnectionUpdate {

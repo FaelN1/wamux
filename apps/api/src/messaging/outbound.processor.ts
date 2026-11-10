@@ -1,10 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { DelayedError, Job } from 'bullmq';
+import { DelayedError, Job, UnrecoverableError } from 'bullmq';
 import { InstanceManagerService } from '../instance/instance-manager.service';
 import { RateLimiterService } from '../throttle/rate-limiter.service';
 import { IdempotencyService } from '../throttle/idempotency.service';
-import { WhatsAppProvider } from '../providers/provider.interface';
+import { ProviderRequestError, WhatsAppProvider } from '../providers/provider.interface';
 import {
   SendButtonsInput,
   SendContactInput,
@@ -58,9 +58,15 @@ export class OutboundProcessor extends WorkerHost {
     } catch (err) {
       // Esgotou as tentativas: libera a idempotência para permitir novo envio.
       const attempts = job.opts.attempts ?? 1;
-      if (idemKey && job.attemptsMade + 1 >= attempts) {
+      // Recusa DEFINITIVA da fonte (4xx que não é rate limit: fora da janela de
+      // 24h, número inválido, template pausado…) — repetir só gera duplicata de
+      // erro e gasta cota. Falha de vez, sem novas tentativas.
+      const permanent =
+        err instanceof ProviderRequestError && err.status < 500 && err.status !== 429;
+      if (idemKey && (permanent || job.attemptsMade + 1 >= attempts)) {
         await this.idem.release(idemKey);
       }
+      if (permanent) throw new UnrecoverableError(err.message);
       throw err;
     }
   }

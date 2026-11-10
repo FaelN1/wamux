@@ -55,7 +55,6 @@ export interface CreateTemplateInput {
   category: TemplateCategory;
   components: TemplateComponent[];
   parameter_format?: ParameterFormat;
-  allow_category_change?: boolean;
 }
 
 export interface CreateTemplateResult {

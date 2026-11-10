@@ -1,4 +1,4 @@
-import { IsArray, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCloudGroupDto {
@@ -7,16 +7,11 @@ export class CreateCloudGroupDto {
   @IsNotEmpty()
   subject!: string;
 
-  /** participantes iniciais (números). Máx 8 no total (limite da Cloud). */
-  @ApiPropertyOptional({
-    type: [String],
-    description: 'Participantes iniciais (números). Máx 8 no total (limite da Cloud).',
-    example: ['5511999999999', '5511888888888'],
-  })
+  /** A Groups API não aceita participantes na criação — eles entram pelo link de convite. */
+  @ApiPropertyOptional({ description: 'Descrição do grupo.', example: 'Avisos e ofertas' })
   @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  participants?: string[];
+  @IsString()
+  description?: string;
 }
 
 export class RemoveParticipantDto {
