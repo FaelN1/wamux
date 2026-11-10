@@ -20,8 +20,6 @@ import {
   ProfileInfo,
   NewsletterInfo,
   CreateNewsletterInput,
-  OrderDetails,
-  GetOrderInput,
   UpdateOwnProfileInput,
   Label,
   LabelTarget,
@@ -107,11 +105,7 @@ export class WhatsmeowProvider extends BaseProvider {
     labels: true,
     communities: true,
     profile: true,
-    // hypermeow (fork do whatsmeow) adicionou GetOrderDetails; o upstream não tem.
-    orders: true,
     updateOwnProfile: true,
-    // emoji/expiração no recado: também veio do hypermeow.
-    statusEmoji: true,
     contactAvatar: true,
     newsletter: true,
     // Cablado no sidecar: SendMedia agora usa UploadNewsletter + SendRequestExtra.MediaHandle
@@ -1251,58 +1245,15 @@ export class WhatsmeowProvider extends BaseProvider {
     return this.result(res.data, jid);
   }
 
-  /**
-   * `PUT /profile` no sidecar. `statusEmoji`/`statusDurationSec` só existem
-   * porque o hypermeow ampliou `SetStatusMessage` — no whatsmeow original o
-   * recado era só texto.
-   */
+  /** `PUT /profile` no sidecar. */
   async updateOwnProfile(input: UpdateOwnProfileInput): Promise<void> {
     try {
       await this.ensureProvisioned();
       await this.client().put('/profile', {
         name: input.name,
         status: input.status,
-        status_emoji: input.statusEmoji,
-        status_duration_sec: input.statusDurationSec,
         photo_url: input.photoUrl,
       });
-    } catch (e) {
-      throw new Error(this.goError(e));
-    }
-  }
-
-  /**
-   * `GET /order/:id` no sidecar. Existe porque o hypermeow adicionou
-   * `GetOrderDetails` — o whatsmeow original não tem, e por isso nenhuma outra
-   * engine implementa este método.
-   */
-  async getOrderDetails(input: GetOrderInput): Promise<OrderDetails> {
-    try {
-      await this.ensureProvisioned();
-      const res = await this.client().get(`/order/${encodeURIComponent(input.orderId)}`, {
-        params: { token: input.token },
-      });
-      const d = res.data as GoOrderData;
-      return {
-        id: d.id,
-        createdAt: d.created_at,
-        catalogId: d.catalog_id || undefined,
-        price: {
-          subtotal: d.price?.subtotal ?? 0,
-          total: d.price?.total ?? 0,
-          currency: d.price?.currency ?? '',
-          status: d.price?.status || undefined,
-        },
-        products: (d.products ?? []).map((p) => ({
-          id: p.id,
-          name: p.name,
-          price: p.price,
-          currency: p.currency,
-          quantity: p.quantity,
-          imageUrl: p.image_url || undefined,
-          variant: p.variant || undefined,
-        })),
-      };
     } catch (e) {
       throw new Error(this.goError(e));
     }
@@ -1539,23 +1490,6 @@ interface GoStatusData {
   status: string;
   timestamp?: number;
 }
-/** Payload do `GET /order/:id` do sidecar (`whatsapp.OrderDetailsResponse`). */
-interface GoOrderData {
-  id: string;
-  created_at: number;
-  catalog_id?: string;
-  price?: { subtotal?: number; total?: number; currency?: string; status?: string };
-  products?: Array<{
-    id: string;
-    name: string;
-    price: number;
-    currency: string;
-    quantity: number;
-    image_url?: string;
-    variant?: string;
-  }>;
-}
-
 /** Payload do `MESSAGE_REACTION` do sidecar (`whatsapp.ReactionData`). */
 interface GoReactionData {
   message_id: string;

@@ -9,8 +9,6 @@ import {
   Param,
   Post,
   Put,
-  Query,
-  UnprocessableEntityException,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -19,7 +17,6 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiParam,
-  ApiQuery,
   ApiSecurity,
   ApiTags,
 } from '@nestjs/swagger';
@@ -196,9 +193,7 @@ const CAPABILITY_FLAGS = [
   'groups',
   'communities',
   'profile',
-  'orders',
   'updateOwnProfile',
-  'statusEmoji',
   'contactAvatar',
   'history',
   'reactions',
@@ -243,40 +238,6 @@ const PROFILE_SCHEMA: SchemaObject = {
     name: { type: 'string', description: 'nome de exibição (pushName)' },
     status: { type: 'string', description: 'recado/"about"' },
     profilePicUrl: { type: 'string' },
-  },
-};
-
-/** Resposta de GET /:id/orders/:orderId (OrderDetails). */
-const ORDER_SCHEMA: SchemaObject = {
-  type: 'object',
-  properties: {
-    id: { type: 'string' },
-    createdAt: { type: 'number', description: 'unix (s)' },
-    catalogId: { type: 'string' },
-    price: {
-      type: 'object',
-      properties: {
-        subtotal: { type: 'number', description: 'menor unidade da moeda (centavos)' },
-        total: { type: 'number', description: 'menor unidade da moeda (centavos)' },
-        currency: { type: 'string' },
-        status: { type: 'string', description: 'ex.: pending enquanto o vendedor não fecha' },
-      },
-    },
-    products: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          name: { type: 'string' },
-          price: { type: 'number', description: 'menor unidade da moeda (centavos)' },
-          currency: { type: 'string' },
-          quantity: { type: 'number' },
-          imageUrl: { type: 'string' },
-          variant: { type: 'string', description: 'variação escolhida (tamanho, cor…)' },
-        },
-      },
-    },
   },
 };
 
@@ -642,8 +603,7 @@ export class InstanceController {
   @ApiOperation({
     summary: 'Edita o perfil da conta conectada',
     description:
-      'Nome, recado e foto da própria conta. `statusEmoji`/`statusDurationSec` exigem ' +
-      'capabilities.statusEmoji (hoje só whatsmeow, via hypermeow) e são ignorados nas demais. ' +
+      'Nome, recado e foto da própria conta. ' +
       '501 uniforme se a engine não permitir editar o perfil.',
   })
   @ApiParam(ID_PARAM)
@@ -656,57 +616,8 @@ export class InstanceController {
         `A engine "${provider.type}" não permite editar o perfil da conta.`,
       );
     }
-    if (dto.statusEmoji && !provider.capabilities.statusEmoji) {
-      throw new UnprocessableEntityException({
-        code: 'statusEmojiUnsupported',
-        provider: provider.type,
-        message: `Emoji no recado não é suportado na engine "${provider.type}".`,
-      });
-    }
     await provider.updateOwnProfile(dto);
     return { ok: true };
-  }
-
-  @Get(':id/orders/:orderId')
-  @UseGuards(InstanceApiKeyGuard)
-  @RequireScope(ApiKeyAction.READ)
-  @ApiOperation({
-    summary: 'Itens de um pedido do catálogo Business',
-    description:
-      'A mensagem de pedido carrega só o id e um token opaco — os itens exigem esta consulta. ' +
-      'Só a engine whatsmeow implementa (o fork hypermeow adicionou GetOrderDetails); ' +
-      'as demais respondem 501 uniforme.',
-  })
-  @ApiParam(ID_PARAM)
-  @ApiParam({ name: 'orderId', description: 'id do pedido, vindo da mensagem recebida' })
-  @ApiQuery({ name: 'token', description: 'token opaco que acompanha o pedido na mensagem' })
-  @ApiOkResponse({ schema: ORDER_SCHEMA })
-  async orderDetails(
-    @Param('id') id: string,
-    @Param('orderId') orderId: string,
-    @Query('token') token: string,
-  ) {
-    const provider = await this.manager.requireLive(id);
-    if (!provider.capabilities.orders || !provider.getOrderDetails) {
-      throw new NotImplementedException(
-        `A engine "${provider.type}" não suporta pedidos do catálogo.`,
-      );
-    }
-    if (!token) {
-      throw new BadRequestException('Informe o "token" do pedido (vem na mensagem recebida).');
-    }
-    try {
-      return await provider.getOrderDetails({ orderId, token });
-    } catch (e) {
-      // O servidor do WhatsApp responde erro genérico para pedido inexistente,
-      // token inválido ou expirado — indistinguíveis daqui. Vira 422 com a
-      // mensagem da engine, em vez do 500 "Erro interno" que esconderia a causa.
-      throw new UnprocessableEntityException({
-        code: 'orderLookupFailed',
-        provider: provider.type,
-        message: (e as Error).message,
-      });
-    }
   }
 
   @Post(':id/provider')

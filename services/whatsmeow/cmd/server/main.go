@@ -171,7 +171,6 @@ func main() {
 	labelHandler := handler.NewLabelHandler(manager)
 	newsletterHandler := handler.NewNewsletterHandler(manager)
 	profileHandler := handler.NewProfileHandler(manager)
-	orderHandler := handler.NewOrderHandler(manager)
 	chatHandler := handler.NewChatHandler(manager, chatStore)
 
 	// Health check
@@ -267,10 +266,6 @@ func main() {
 	profileGroup := api.Group("/profile", middleware.APIKeyAuth(instanceRepo))
 	profileGroup.Get("/", profileHandler.Get)
 	profileGroup.Put("/", profileHandler.Update)
-
-	// Business catalog orders (Instance API Key)
-	orderGroup := api.Group("/order", middleware.APIKeyAuth(instanceRepo))
-	orderGroup.Get("/:id", orderHandler.Get)
 
 	// Community/Group routes (Instance API Key)
 	// Chat routes (Instance API Key)

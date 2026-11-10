@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"go.mau.fi/util/jsontime"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -1092,14 +1091,9 @@ type ProfileInfo struct {
 }
 
 type UpdateProfileRequest struct {
-	Name   string `json:"name,omitempty"`
-	Status string `json:"status,omitempty"`
-	// StatusEmoji and StatusDurationSec ride along with Status: hypermeow
-	// widened SetStatusMessage to carry an emoji and an expiry, which upstream
-	// whatsmeow could not express. Zero duration means "no expiry".
-	StatusEmoji       string `json:"status_emoji,omitempty"`
-	StatusDurationSec int    `json:"status_duration_sec,omitempty"`
-	PhotoURL          string `json:"photo_url,omitempty"` // URL to download JPEG from
+	Name     string `json:"name,omitempty"`
+	Status   string `json:"status,omitempty"`
+	PhotoURL string `json:"photo_url,omitempty"` // URL to download JPEG from
 }
 
 // ── Regular groups ──────────────────────────────────────────────
@@ -1513,15 +1507,8 @@ func (c *Client) UpdateProfile(req UpdateProfileRequest) error {
 		}
 	}
 
-	if req.Status != "" || req.StatusEmoji != "" {
-		input := types.SetStatusInput{
-			Text:     &req.Status,
-			Duration: jsontime.Seconds{Duration: time.Duration(req.StatusDurationSec) * time.Second},
-		}
-		if req.StatusEmoji != "" {
-			input.Emoji = &types.SetStatusEmoji{Content: req.StatusEmoji}
-		}
-		if err := c.WAClient.SetStatusMessage(ctx, input); err != nil {
+	if req.Status != "" {
+		if err := c.WAClient.SetStatusMessage(ctx, req.Status); err != nil {
 			return fmt.Errorf("failed to update status: %w", err)
 		}
 	}
@@ -1821,76 +1808,6 @@ func (c *Client) UnfollowNewsletter(jidStr string) error {
 		return fmt.Errorf("failed to unfollow newsletter: %w", err)
 	}
 	return nil
-}
-
-// ── catálogo Business: detalhes de pedido ───────────────────
-
-// OrderDetailsResponse is the wire shape of a catalog order. It mirrors
-// types.OrderDetails but flattens the variant and normalises the timestamp to
-// unix seconds, matching how the gateway represents time everywhere else.
-type OrderDetailsResponse struct {
-	ID        string                 `json:"id"`
-	CreatedAt int64                  `json:"created_at"`
-	CatalogID string                 `json:"catalog_id,omitempty"`
-	Price     OrderPriceResponse     `json:"price"`
-	Products  []OrderProductResponse `json:"products"`
-}
-
-type OrderPriceResponse struct {
-	Subtotal int64  `json:"subtotal"`
-	Total    int64  `json:"total"`
-	Currency string `json:"currency"`
-	Status   string `json:"status,omitempty"`
-}
-
-type OrderProductResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Price    int64  `json:"price"`
-	Currency string `json:"currency"`
-	Quantity int    `json:"quantity"`
-	ImageURL string `json:"image_url,omitempty"`
-	Variant  string `json:"variant,omitempty"`
-}
-
-// GetOrderDetails fetches a catalog order. The order message a customer sends
-// carries only the id and an opaque token — the items themselves need this
-// extra round trip. Available because hypermeow added GetOrderDetails; it does
-// not exist in upstream whatsmeow.
-func (c *Client) GetOrderDetails(orderID, token string) (*OrderDetailsResponse, error) {
-	ctx, cancel := waCtx()
-	defer cancel()
-
-	order, err := c.WAClient.GetOrderDetails(ctx, orderID, token)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get order details: %w", err)
-	}
-
-	products := make([]OrderProductResponse, 0, len(order.Products))
-	for _, p := range order.Products {
-		products = append(products, OrderProductResponse{
-			ID:       p.ID,
-			Name:     p.Name,
-			Price:    p.Price,
-			Currency: p.Currency,
-			Quantity: p.Quantity,
-			ImageURL: p.ImageURL,
-			Variant:  p.VariantInfo.Properties,
-		})
-	}
-
-	return &OrderDetailsResponse{
-		ID:        order.ID,
-		CreatedAt: order.CreatedAt.Unix(),
-		CatalogID: order.CatalogID,
-		Price: OrderPriceResponse{
-			Subtotal: order.Price.Subtotal,
-			Total:    order.Price.Total,
-			Currency: order.Price.Currency,
-			Status:   order.Price.PriceStatus,
-		},
-		Products: products,
-	}, nil
 }
 
 // ── interativos (botões, lista, PIX) ────────────────────────

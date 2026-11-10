@@ -318,7 +318,7 @@ const SERVICE_ROLE: Record<string, string> = {
   postgres: 'instâncias, mensagens e sessões',
   redis: 'rate limit, registro de instâncias e filas',
   rabbitmq: 'transporte de eventos (opcional)',
-  whatsmeow: 'sidecar Go (hypermeow, fork do whatsmeow)',
+  whatsmeow: 'sidecar Go (whatsmeow)',
   ffmpeg: 'nota de voz (ogg/opus)',
 };
 

@@ -3,7 +3,6 @@ export * from './messages';
 export * from './contacts';
 export * from './groups';
 export * from './communities';
-export * from './orders';
 export * from './profile';
 export * from './capabilities';
 export * from './templates';

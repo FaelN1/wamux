@@ -12,10 +12,7 @@ export interface ProviderMeta {
 export const PROVIDERS: ProviderMeta[] = [
   { value: ProviderType.BAILEYS, label: 'Baileys', official: false },
   { value: ProviderType.CLOUD_API, label: 'Cloud API (oficial)', official: true },
-  // O valor do enum segue 'whatsmeow' — é o que está gravado no banco de
-  // cada instância e no `replace` do go.mod. Só o RÓTULO muda, porque a
-  // lib efetivamente em uso é o fork hypermeow.
-  { value: ProviderType.WHATSMEOW, label: 'hypermeow (Go)', official: false },
+  { value: ProviderType.WHATSMEOW, label: 'whatsmeow (Go)', official: false },
 ];
 
 /**

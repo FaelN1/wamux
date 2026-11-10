@@ -27,8 +27,6 @@ import {
   CommunityParticipant,
   CommunityInviteProbeResult,
   UpdateCommunityImageInput,
-  OrderDetails,
-  GetOrderInput,
   ProfileInfo,
   UpdateOwnProfileInput,
   NormalizedMessage,
@@ -307,13 +305,6 @@ export interface WhatsAppProvider {
   updateProfile?(input: UpdateProfileInput): Promise<void>;
   /** Edita o perfil da PRÓPRIA conta conectada (gated por capabilities.updateOwnProfile). */
   updateOwnProfile?(input: UpdateOwnProfileInput): Promise<void>;
-
-  // ── pedidos do catálogo Business (gated por capabilities.orders) ──
-  /**
-   * Itens de um pedido. A mensagem de pedido carrega só `orderId` + `token`,
-   * então o conteúdo exige esta consulta separada.
-   */
-  getOrderDetails?(input: GetOrderInput): Promise<OrderDetails>;
 
   // ── conta/WABA (Cloud-only, gated por capabilities.cloudAccount) ──
   listPhoneNumbers?(): Promise<PhoneNumberInfo[]>;

@@ -36,12 +36,8 @@ export interface ProviderCapabilities {
   communities?: boolean;
   /** perfil da própria conta conectada (nome/foto). */
   profile?: boolean;
-  /** detalhes de pedido do catálogo Business (só whatsmeow, via hypermeow). */
-  orders?: boolean;
   /** edita o perfil da própria conta (nome/recado/foto) — distinto de `updateProfile`, que é o perfil de negócio da Cloud. */
   updateOwnProfile?: boolean;
-  /** emoji e expiração no recado — extra do hypermeow, dentro de `updateOwnProfile`. */
-  statusEmoji?: boolean;
   /** foto de perfil de um contato/chat arbitrário por jid (Inbox — refetch de avatar). */
   contactAvatar?: boolean;
   /** history sync (import de histórico). */

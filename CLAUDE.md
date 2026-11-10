@@ -73,7 +73,7 @@ Running `apps/api` outside Docker needs Postgres + Redis and the env from `.env.
 
 **Auth is three-tier:** `GLOBAL_API_KEY` for admin routes (create/list/delete instances); a per-instance **master** key (generated at creation, full access); and optional **scoped** keys per instance (`api-keys/`, `instances/:id/api-keys`) limited to `ApiKeyAction`s (`read`/`send`/`control`/`setting`/`app`/`delete`), stored hashed. A key can never grant an action it doesn't hold. Guards live in `common/guards/` (`apikey` header); routes opt into action checks with `@RequireScope()`.
 
-**whatsmeow is federated, not managed.** The Go sidecar is the source of truth for its own instances/queues/webhooks; the gateway adapter auto-provisions instances there and registers a callback webhook (`WHATSMEOW_CALLBACK_BASE`). Don't duplicate its state in the gateway. It uses a separate Postgres database (`WHATSMEOW_DB_NAME`) in the same container, and builds against the `hypermeow` fork of `go.mau.fi/whatsmeow` (a `replace` in `services/whatsmeow/go.mod`).
+**whatsmeow is federated, not managed.** The Go sidecar is the source of truth for its own instances/queues/webhooks; the gateway adapter auto-provisions instances there and registers a callback webhook (`WHATSMEOW_CALLBACK_BASE`). Don't duplicate its state in the gateway. It uses a separate Postgres database (`WHATSMEOW_DB_NAME`) in the same container, and builds against upstream `go.mau.fi/whatsmeow` (no fork — keep it that way).
 
 ## Adding an engine / a feature — where things live
 

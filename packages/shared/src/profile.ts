@@ -26,13 +26,6 @@ export interface UpdateOwnProfileInput {
   name?: string;
   /** recado/"about". */
   status?: string;
-  /**
-   * Emoji exibido junto do recado. Só a engine whatsmeow aceita — o upstream
-   * do whatsmeow nem expressava isso; veio com o fork hypermeow.
-   */
-  statusEmoji?: string;
-  /** expiração do recado, em segundos. Ausente ou 0 = não expira. */
-  statusDurationSec?: number;
   /** URL de onde a engine baixa o JPEG da foto. */
   photoUrl?: string;
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Multi-tenant WhatsApp microservice in Go using [whatsmeow](https://github.com/tulir/whatsmeow) — built against the [hypermeow](https://github.com/polymorfa/hypermeow) fork via a `replace` directive in `go.mod`. Exposes a REST API (Fiber v2) to manage multiple WhatsApp sessions (instances), send messages, and administer groups/communities. Each instance = one phone number with its own API key.
+Multi-tenant WhatsApp microservice in Go using [whatsmeow](https://github.com/tulir/whatsmeow). Exposes a REST API (Fiber v2) to manage multiple WhatsApp sessions (instances), send messages, and administer groups/communities. Each instance = one phone number with its own API key.
 
 ## Common Commands
 
@@ -68,7 +68,7 @@ All routes under `/api/v1`:
 - `/instance` (Master key): CRUD, connect, disconnect
 - `/instance` (Instance key): get info, status, QR code
 - `/message` (Instance key): send text, media, poll, buttons/list/PIX, location, contact, status; react, edit, delete; history and stats
-- `/chat`, `/group`, `/label`, `/newsletter`, `/order` (Instance key): per-domain operations
+- `/chat`, `/group`, `/label`, `/newsletter` (Instance key): per-domain operations
 - `/profile` (Instance key): get/update profile
 - `/community` (Instance key): list, create, sync, invite links, members, admin management
 
