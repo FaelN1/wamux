@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/build
+**/.turbo
+.git
+.env
+.env.*
+**/sessions
+**/logs
+**/.wwebjs_auth
+**/.wwebjs_cache
+*.log
+services/whatsmeow/server
+services/whatsmeow/server.exe

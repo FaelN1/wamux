@@ -1,0 +1,14 @@
+{
+  "extends": "@wamux/config/tsconfig/nest",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "removeComments": true,
+    "incremental": true,
+    "paths": {
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

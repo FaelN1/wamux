@@ -1,0 +1,185 @@
+# WAMux — stack pronta para Portainer (ou `docker compose -f deploy/portainer-stack.yml up -d`).
+#
+# Diferente do docker-compose.yml da raiz, esta stack:
+#   • usa as IMAGENS PUBLICADAS (não builda) — cola direto no editor web do Portainer;
+#   • cria o 2º banco (do whatsmeow) via um init one-shot (pg-init), SEM depender de
+#     arquivos no host — o bind-mount ./docker/postgres/init não existe no Portainer;
+#   • NÃO expõe Postgres/Redis ao host (só rede interna) — publica web, gateway e a UI
+#     do RabbitMQ.
+#
+# No Portainer: Stacks → Add stack → nome "wamux" → Web editor → cole este arquivo →
+# em "Environment variables" defina as chaves marcadas (ver deploy/portainer.env.example)
+# → Deploy. (As imagens faeln1/wamux-* precisam já estar no registry.)
+
+name: wamux
+
+services:
+  gateway:
+    image: ${WAMUX_IMAGE:-faeln1/wamux-gateway}:${WAMUX_TAG:-1.0.0}
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_ID: ${WORKER_ID:-worker-1}
+      # Segredo obrigatório: a stack se recusa a subir sem ele.
+      GLOBAL_API_KEY: ${GLOBAL_API_KEY:?defina GLOBAL_API_KEY}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      # Postgres (interno)
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-whatsapp}
+      DB_PASSWORD: ${DB_PASSWORD:-whatsapp}
+      DB_NAME: ${DB_NAME:-whatsapp_api}
+      # Sem migrations ainda: em prod o schema é criado no boot por synchronize.
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-true}
+      # Redis (interno)
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # RabbitMQ — se trocar a senha, atualize também esta URI.
+      RABBITMQ_URI: ${RABBITMQ_URI:-amqp://wamux:wamux@rabbitmq:5672}
+      # Mídia local persistida em volume.
+      MEDIA_STORE: ${MEDIA_STORE:-local}
+      MEDIA_LOCAL_DIR: /app/media
+      # Identidade Baileys em "Aparelhos conectados".
+      SESSION_PHONE_CLIENT: ${SESSION_PHONE_CLIENT:-WAMux}
+      SESSION_PHONE_NAME: ${SESSION_PHONE_NAME:-Chrome}
+      # Sidecar whatsmeow.
+      WHATSMEOW_URL: http://whatsmeow:3000
+      WHATSMEOW_MASTER_KEY: ${WHATSMEOW_MASTER_KEY:?defina WHATSMEOW_MASTER_KEY}
+      WHATSMEOW_CALLBACK_BASE: ${WHATSMEOW_CALLBACK_BASE:-http://gateway:3000}
+      # Cloud API (opcional).
+      CLOUD_API_VERIFY_TOKEN: ${CLOUD_API_VERIFY_TOKEN:-}
+    volumes:
+      - gateway_media:/app/media
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      whatsmeow:
+        condition: service_started
+    networks: [wamux-net]
+
+  # Painel web (React/Vite) servido por nginx, com proxy /api -> gateway.
+  web:
+    image: ${WAMUX_WEB_IMAGE:-faeln1/wamux-web}:${WAMUX_TAG:-1.0.0}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on: [gateway]
+    networks: [wamux-net]
+
+  # Sidecar Go (whatsmeow). Fala com o gateway pela rede interna.
+  whatsmeow:
+    image: ${WAMUX_WHATSMEOW_IMAGE:-faeln1/wamux-whatsmeow}:${WAMUX_TAG:-1.0.0}
+    restart: unless-stopped
+    environment:
+      APP_PORT: "3000"
+      APP_ENV: production
+      DATABASE_URL: postgres://${DB_USER:-whatsapp}:${DB_PASSWORD:-whatsapp}@postgres:5432/${WHATSMEOW_DB_NAME:-wamux}?sslmode=disable
+      MASTER_API_KEY: ${WHATSMEOW_MASTER_KEY:?defina WHATSMEOW_MASTER_KEY}
+      WHATSMEOW_SESSION_DIR: /app/sessions
+      LOG_DIR: /app/logs
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SENTRY_DSN: ${WHATSMEOW_SENTRY_DSN:-}
+      WEBSHARE_API_KEY: ${WHATSMEOW_WEBSHARE_API_KEY:-}
+    volumes:
+      - whatsmeow_sessions:/app/sessions
+      - whatsmeow_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg-init:
+        condition: service_completed_successfully
+    networks: [wamux-net]
+
+  # One-shot: cria o banco separado do whatsmeow se ainda não existir (idempotente).
+  # Substitui o script ./docker/postgres/init (que não existe no host do Portainer).
+  pg-init:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-whatsapp}
+    entrypoint:
+      - sh
+      - -c
+      - >
+        psql -h postgres -U "${DB_USER:-whatsapp}" -d postgres -tc
+        "SELECT 1 FROM pg_database WHERE datname='${WHATSMEOW_DB_NAME:-wamux}'"
+        | grep -q 1 ||
+        psql -h postgres -U "${DB_USER:-whatsapp}" -d postgres -c
+        "CREATE DATABASE ${WHATSMEOW_DB_NAME:-wamux}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [wamux-net]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-whatsapp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-whatsapp}
+      POSTGRES_DB: ${DB_NAME:-whatsapp_api}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-whatsapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [wamux-net]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [wamux-net]
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wamux}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-wamux}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    ports:
+      - "${RABBITMQ_UI_PORT:-15672}:15672" # UI de gestão
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [wamux-net]
+
+volumes:
+  pgdata:
+  redisdata:
+  whatsmeow_sessions:
+  whatsmeow_logs:
+  rabbitmqdata:
+  gateway_media:
+
+networks:
+  wamux-net:
+    driver: bridge
