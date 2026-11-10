@@ -88,23 +88,26 @@ Ele não instala nada no sistema sem perguntar e nunca sobrescreve um `.env` sem
 
 Requisitos: servidor Linux (apt ou dnf) com root ou sudo, um registro **A** do domínio apontando para o servidor e as portas **80** e **443** abertas. Com isso o instalador:
 
-- publica um único domínio — `/api` e `/events` (WebSocket) vão para o gateway, o resto para o painel;
-- define `PUBLIC_BASE_URL=https://seu-dominio` e `BIND_ADDR=127.0.0.1`, de modo que só o nginx fica exposto (o Docker publica portas por fora do `ufw`, então é o bind que fecha as demais);
+- publica o domínio — `/api` e `/events` (WebSocket) vão para o gateway, o resto para o painel;
+- define `PUBLIC_BASE_URL=https://seu-dominio` (ou o da API, se ela tiver subdomínio próprio) e `BIND_ADDR=127.0.0.1`, de modo que só o nginx fica exposto (o Docker publica portas por fora do `ufw`, então é o bind que fecha as demais);
 - libera 80/443 no `ufw`/`firewalld`, se estiverem ativos, e pede a sua confirmação dos termos do Let's Encrypt.
+
+**Painel e API em subdomínios separados.** Informe um segundo domínio quando o instalador perguntar pelo domínio da API (ou use `--api-domain`). Exemplo: `painel.suaempresa.com` para o painel e `api.suaempresa.com` para a API. Os dois precisam de registro A apontando para o servidor, e um único certificado cobre ambos. O domínio da API passa a ser a `PUBLIC_BASE_URL` (é ele que vai nos webhooks da Meta e no endpoint de Flows). O domínio do painel continua respondendo em `/api`, porque o painel chama a API pela mesma origem.
 
 Se o certificado não sair (DNS ainda propagando, porta 80 bloqueada), a instalação segue e o instalador mostra o comando para repetir só a emissão. Em macOS ou sem domínio, a stack sobe em `http://localhost` normalmente — mas a Meta só entrega webhooks e Flows em HTTPS.
 
 #### Opções
 
-| Opção             | Efeito                                                            |
-| ----------------- | ----------------------------------------------------------------- |
-| `--dir <pasta>`   | Pasta de instalação (padrão: `./wamux`).                          |
-| `--branch <nome>` | Branch ou tag a instalar (padrão: `main`).                        |
-| `--domain <host>` | Domínio para o HTTPS (nginx + Let's Encrypt).                     |
-| `--email <email>` | E-mail da conta Let's Encrypt (avisos de expiração).              |
-| `--agree-tos`     | Aceita os termos do Let's Encrypt — obrigatório junto de `--yes`. |
-| `--yes`           | Sem perguntas: usa os padrões e gera os segredos.                 |
-| `--no-start`      | Prepara tudo (`.env`, HTTPS), mas não sobe os containers.         |
+| Opção                 | Efeito                                                            |
+| --------------------- | ----------------------------------------------------------------- |
+| `--dir <pasta>`       | Pasta de instalação (padrão: `./wamux`).                          |
+| `--branch <nome>`     | Branch ou tag a instalar (padrão: `main`).                        |
+| `--domain <host>`     | Domínio para o HTTPS (nginx + Let's Encrypt).                     |
+| `--api-domain <host>` | Subdomínio separado para a API; o `--domain` fica com o painel.   |
+| `--email <email>`     | E-mail da conta Let's Encrypt (avisos de expiração).              |
+| `--agree-tos`         | Aceita os termos do Let's Encrypt — obrigatório junto de `--yes`. |
+| `--yes`               | Sem perguntas: usa os padrões e gera os segredos.                 |
+| `--no-start`          | Prepara tudo (`.env`, HTTPS), mas não sobe os containers.         |
 
 Para passar opções pelo comando de uma linha, use `bash -s --`:
 
@@ -112,6 +115,11 @@ Para passar opções pelo comando de uma linha, use `bash -s --`:
 # servidor novo, sem perguntas, já com HTTPS
 curl -fsSL https://raw.githubusercontent.com/FaelN1/wamux/main/install.sh | bash -s -- \
   --yes --dir /opt/wamux --domain wamux.suaempresa.com --email voce@suaempresa.com --agree-tos
+
+# painel e API em subdomínios separados
+curl -fsSL https://raw.githubusercontent.com/FaelN1/wamux/main/install.sh | bash -s -- \
+  --yes --dir /opt/wamux --domain painel.suaempresa.com --api-domain api.suaempresa.com \
+  --email voce@suaempresa.com --agree-tos
 ```
 
 Vale saber: a primeira subida constrói três imagens (5 a 15 minutos); as portas do host são fixas (o instalador avisa quando alguma está ocupada); e, se já existir um volume de banco de uma instalação anterior, ele avisa antes de gerar uma senha nova que não bateria com esse volume.

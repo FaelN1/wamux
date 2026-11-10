@@ -12,6 +12,10 @@
 # Opções:
 #   --dir <pasta>     pasta de instalação (padrão: ./wamux)
 #   --branch <nome>   branch/tag a instalar (padrão: main)
+#   --domain <host>   domínio para HTTPS (nginx + Let's Encrypt) — só Linux
+#   --api-domain <host>  subdomínio separado para a API (o --domain fica com o painel)
+#   --email <email>   e-mail da conta Let's Encrypt
+#   --agree-tos       aceita os termos do Let's Encrypt (necessário com --yes)
 #   --yes             não pergunta nada: usa os padrões e gera os segredos
 #   --no-start        só prepara (.env), não sobe os containers
 #   -h, --help        mostra esta ajuda
@@ -26,6 +30,7 @@ INSTALL_DIR="${WAMUX_DIR:-}"
 ASSUME_YES=0
 NO_START=0
 HTTPS_DOMAIN="${WAMUX_DOMAIN:-}"
+API_DOMAIN="${WAMUX_API_DOMAIN:-}"
 HTTPS_EMAIL="${WAMUX_EMAIL:-}"
 AGREE_TOS=0
 
@@ -58,6 +63,8 @@ Opções:
   --dir <pasta>     pasta de instalação (padrão: ./wamux)
   --branch <nome>   branch/tag a instalar (padrão: main)
   --domain <host>   domínio para HTTPS (nginx + Let's Encrypt) — só Linux
+  --api-domain <host>
+                    subdomínio separado para a API; o --domain fica só com o painel
   --email <email>   e-mail da conta Let's Encrypt (avisos de expiração)
   --agree-tos       aceita os termos do Let's Encrypt (necessário com --yes)
   --yes             não pergunta nada: usa os padrões e gera os segredos
@@ -86,6 +93,11 @@ while [ $# -gt 0 ]; do
       HTTPS_DOMAIN="$2"
       shift 2
       ;;
+    --api-domain)
+      [ $# -ge 2 ] || die "--api-domain precisa de um valor"
+      API_DOMAIN="$2"
+      shift 2
+      ;;
     --email)
       [ $# -ge 2 ] || die "--email precisa de um valor"
       HTTPS_EMAIL="$2"
@@ -107,6 +119,9 @@ while [ $# -gt 0 ]; do
     *) die "Opção desconhecida: $1 (use --help)" ;;
   esac
 done
+
+[ -n "$API_DOMAIN" ] && [ -z "$HTTPS_DOMAIN" ] &&
+  die "--api-domain só faz sentido junto de --domain (o domínio do painel)."
 
 # ── entrada interativa ───────────────────────────────────────
 # Com `curl … | bash` o stdin é o próprio script: as perguntas leem do terminal.
@@ -263,22 +278,26 @@ resolve_host() {
   fi
 }
 
-# Bloco de servidor: um domínio só. /api e /events (WebSocket) vão para o
-# gateway; o resto, para o painel. O certbot acrescenta o 443 e o redirect.
-nginx_conf() {
-  local domain="$1" body_mb="$2"
+norm_domain() {
+  printf '%s' "$1" | tr 'A-Z' 'a-z' | sed 's#^https\{0,1\}://##; s#/.*##'
+}
+
+# Domínios da última execução, lidos do marcador no site do nginx: "<painel> <api>".
+prev_domains() {
+  local f
+  for f in /etc/nginx/sites-available/wamux.conf /etc/nginx/conf.d/wamux.conf; do
+    if [ -r "$f" ]; then
+      sed -n 's/^# wamux-domains: painel=\([^ ]*\) api=\([^ ]*\)$/\1 \2/p' "$f" | head -n 1
+      return 0
+    fi
+  done
+}
+
+nginx_marker() { printf '# wamux-domains: painel=%s api=%s' "$1" "${2:-$1}"; }
+
+nginx_loc_gateway() { # <caminho>
   cat <<EOF
-# WAMux — gerado pelo install.sh. Alterações manuais são preservadas em backup
-# (.bak-<data>) quando o instalador regrava este arquivo.
-server {
-  listen 80;
-  listen [::]:80;
-  server_name ${domain};
-
-  # mídia em base64 no corpo JSON: acompanha MEDIA_MAX_SIZE_MB (+40%).
-  client_max_body_size ${body_mb}m;
-
-  location /api/ {
+  location $1 {
     proxy_pass http://127.0.0.1:3000;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
@@ -301,6 +320,29 @@ server {
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_read_timeout 3600s;
   }
+EOF
+}
+
+# Site do nginx. O certbot acrescenta o 443 e o redirect em cada bloco.
+#  - domínio do painel: /api e /events (WebSocket) vão para o gateway, o resto
+#    para o painel. O /api fica aqui mesmo com a API em subdomínio próprio,
+#    porque o painel chama a API pela mesma origem.
+#  - domínio da API (opcional): tudo vai para o gateway.
+nginx_conf() {
+  local domain="$1" body_mb="$2" api_domain="${3:-}"
+  cat <<EOF
+# WAMux — gerado pelo install.sh. Alterações manuais são preservadas em backup
+# (.bak-<data>) quando o instalador regrava este arquivo.
+$(nginx_marker "$domain" "$api_domain")
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${domain};
+
+  # mídia em base64 no corpo JSON: acompanha MEDIA_MAX_SIZE_MB (+40%).
+  client_max_body_size ${body_mb}m;
+
+$(nginx_loc_gateway /api/)
 
   # Painel.
   location / {
@@ -313,6 +355,44 @@ server {
   }
 }
 EOF
+  [ -n "$api_domain" ] || return 0
+  cat <<EOF
+
+# API em subdomínio próprio.
+server {
+  listen 80;
+  listen [::]:80;
+  server_name ${api_domain};
+
+  client_max_body_size ${body_mb}m;
+
+  location = / {
+    return 302 /api/docs;
+  }
+
+$(nginx_loc_gateway /)
+}
+EOF
+}
+
+# check_dns <domínio> → 1 se o usuário desistir.
+check_dns() {
+  local d="$1" ip local_ips
+  ip="$(resolve_host "$d" || true)"
+  if [ -z "$ip" ]; then
+    warn "$d não resolve para nenhum IP. Crie o registro A no DNS apontando para este servidor."
+    confirm "Tentar emitir o certificado mesmo assim?" n || return 1
+  else
+    local_ips="$(hostname -I 2>/dev/null || true)"
+    case " $local_ips " in
+      *" $ip "*) ok "$d aponta para este servidor ($ip)" ;;
+      *)
+        warn "$d aponta para $ip, que não é um IP desta máquina (normal atrás de NAT/balanceador)."
+        confirm "Esse IP chega neste servidor nas portas 80 e 443?" s || return 1
+        ;;
+    esac
+  fi
+  return 0
 }
 
 # Instala nginx + certbot, grava o site e pede o certificado. Falhas aqui NÃO
@@ -320,24 +400,17 @@ EOF
 HTTPS_DONE=0
 CERTBOT_CMD=''
 setup_https() {
-  local domain="$1" email="$2" body_mb conf link='' ip local_ips
+  local domain="$1" email="$2" api_domain="${3:-}" body_mb conf link='' d cert_domains
 
-  step "HTTPS: nginx + Let's Encrypt para $domain"
-
-  ip="$(resolve_host "$domain" || true)"
-  if [ -z "$ip" ]; then
-    warn "$domain não resolve para nenhum IP. Crie o registro A no DNS apontando para este servidor."
-    confirm "Tentar emitir o certificado mesmo assim?" n || return 1
+  if [ -n "$api_domain" ]; then
+    step "HTTPS: nginx + Let's Encrypt — painel em $domain, API em $api_domain"
   else
-    local_ips="$(hostname -I 2>/dev/null || true)"
-    case " $local_ips " in
-      *" $ip "*) ok "$domain aponta para este servidor ($ip)" ;;
-      *)
-        warn "$domain aponta para $ip, que não é um IP desta máquina (normal atrás de NAT/balanceador)."
-        confirm "Esse IP chega neste servidor nas portas 80 e 443?" s || return 1
-        ;;
-    esac
+    step "HTTPS: nginx + Let's Encrypt para $domain"
   fi
+
+  for d in "$domain" $api_domain; do
+    check_dns "$d" || return 1
+  done
 
   if ! has nginx || ! has certbot; then
     info "Instalando nginx e certbot (${PKG})…"
@@ -364,7 +437,7 @@ setup_https() {
   fi
 
   if $SUDO test -f "$conf"; then
-    if $SUDO grep -q 'managed by Certbot' "$conf" && $SUDO grep -q "server_name ${domain};" "$conf"; then
+    if $SUDO grep -q 'managed by Certbot' "$conf" && $SUDO grep -qxF "$(nginx_marker "$domain" "$api_domain")" "$conf"; then
       ok "Site já configurado com certificado em $conf — mantido."
       HTTPS_DONE=1
       return 0
@@ -373,7 +446,7 @@ setup_https() {
     info "Configuração anterior do site salva em backup."
   fi
 
-  nginx_conf "$domain" "$body_mb" | $SUDO tee "$conf" >/dev/null
+  nginx_conf "$domain" "$body_mb" "$api_domain" | $SUDO tee "$conf" >/dev/null
   [ -n "$link" ] && $SUDO ln -sf "$conf" "$link"
 
   if ! $SUDO nginx -t >/dev/null 2>&1; then
@@ -403,11 +476,15 @@ setup_https() {
     fi
   fi
 
-  CERTBOT_CMD="${SUDO:+$SUDO }certbot --nginx -d $domain -m $email --agree-tos --no-eff-email --redirect --non-interactive --keep-until-expiring"
+  # Um certificado só, cobrindo os dois nomes quando a API tem subdomínio próprio.
+  cert_domains="-d $domain"
+  [ -n "$api_domain" ] && cert_domains="$cert_domains -d $api_domain"
+  CERTBOT_CMD="${SUDO:+$SUDO }certbot --nginx $cert_domains -m $email --agree-tos --no-eff-email --redirect --non-interactive --keep-until-expiring --expand"
   info "Pedindo o certificado ao Let's Encrypt…"
-  if $SUDO certbot --nginx -d "$domain" -m "$email" --agree-tos --no-eff-email --redirect \
-    --non-interactive --keep-until-expiring; then
-    ok "Certificado emitido e HTTPS ativo em https://$domain"
+  # shellcheck disable=SC2086 # cert_domains: nomes já validados, sem espaços
+  if $SUDO certbot --nginx $cert_domains -m "$email" --agree-tos --no-eff-email --redirect \
+    --non-interactive --keep-until-expiring --expand; then
+    ok "Certificado emitido e HTTPS ativo em https://$domain${api_domain:+ e https://$api_domain}"
     HTTPS_DONE=1
   else
     warn "O certbot não conseguiu emitir o certificado. Causas comuns: DNS ainda não propagou, porta 80 bloqueada no provedor ou limite de emissões do Let's Encrypt."
@@ -422,6 +499,29 @@ setup_https() {
     warn "Não encontrei o agendamento de renovação. Agende: ${SUDO:+$SUDO }certbot renew --quiet (duas vezes ao dia)."
   fi
   return 0
+}
+
+# Valida domínio(s), e-mail e aceite dos termos. Define PUBLIC_HOST: o host que
+# clientes e a Meta chamam (o da API, quando ela tem subdomínio próprio).
+PUBLIC_HOST=''
+prepare_https() {
+  https_supported || die "Não dá para configurar o HTTPS aqui: $HTTPS_WHY."
+  HTTPS_DOMAIN="$(norm_domain "$HTTPS_DOMAIN")"
+  valid_domain "$HTTPS_DOMAIN" || die "Domínio inválido: $HTTPS_DOMAIN"
+  if [ -n "$API_DOMAIN" ]; then
+    API_DOMAIN="$(norm_domain "$API_DOMAIN")"
+    valid_domain "$API_DOMAIN" || die "Domínio da API inválido: $API_DOMAIN"
+    [ "$API_DOMAIN" = "$HTTPS_DOMAIN" ] && API_DOMAIN=''
+  fi
+  [ -n "$HTTPS_EMAIL" ] || ask HTTPS_EMAIL "E-mail para o Let's Encrypt (avisos de expiração do certificado)"
+  valid_email "$HTTPS_EMAIL" || die "E-mail inválido: ${HTTPS_EMAIL:-vazio}"
+  if [ "$AGREE_TOS" -eq 0 ]; then
+    [ "$ASSUME_YES" -eq 1 ] && die "Com --yes, aceite os termos do Let's Encrypt explicitamente com --agree-tos."
+    info "Termos do Let's Encrypt: https://letsencrypt.org/repository/"
+    confirm "Você aceita os termos de serviço do Let's Encrypt?" n ||
+      die "Sem aceitar os termos não é possível emitir o certificado. Rode de novo sem informar o domínio para instalar sem HTTPS."
+  fi
+  PUBLIC_HOST="${API_DOMAIN:-$HTTPS_DOMAIN}"
 }
 
 # ── 1. pré-requisitos ────────────────────────────────────────
@@ -543,27 +643,25 @@ if [ "$CONFIGURE" -eq 1 ]; then
     info "HTTPS: se você tem um domínio apontado para este servidor, o instalador configura o"
     info "nginx como proxy e pede o certificado gratuito do Let's Encrypt (renovação automática)."
     if confirm "Configurar domínio com HTTPS agora?" n; then
-      ask HTTPS_DOMAIN "Domínio (ex.: wamux.suaempresa.com)" "$(printf '%s' "$DEFAULT_URL" | sed -n 's#^https://\([^/:]*\).*#\1#p')"
+      PREV_DOMAINS="$(prev_domains || true)"
+      PREV_PANEL="${PREV_DOMAINS%% *}"
+      PREV_API="${PREV_DOMAINS##* }"
+      [ -n "$PREV_PANEL" ] || PREV_PANEL="$(printf '%s' "$DEFAULT_URL" | sed -n 's#^https://\([^/:]*\).*#\1#p')"
+      ask HTTPS_DOMAIN "Domínio do painel (ex.: wamux.suaempresa.com)" "$PREV_PANEL"
+      if [ -n "$HTTPS_DOMAIN" ] && [ -z "$API_DOMAIN" ]; then
+        info "A API pode ficar num subdomínio próprio (ex.: api.suaempresa.com). Repetir o do painel = um domínio só."
+        ask API_DOMAIN "Domínio da API" "${PREV_API:-$HTTPS_DOMAIN}"
+      fi
     fi
   elif [ -z "$HTTPS_DOMAIN" ] && [ "$OS" = "Linux" ]; then
     info "HTTPS automático indisponível: $HTTPS_WHY."
   fi
 
   if [ -n "$HTTPS_DOMAIN" ]; then
-    https_supported || die "Não dá para configurar o HTTPS aqui: $HTTPS_WHY."
-    HTTPS_DOMAIN="$(printf '%s' "$HTTPS_DOMAIN" | tr 'A-Z' 'a-z' | sed 's#^https\{0,1\}://##; s#/.*##')"
-    valid_domain "$HTTPS_DOMAIN" || die "Domínio inválido: $HTTPS_DOMAIN"
-    [ -n "$HTTPS_EMAIL" ] || ask HTTPS_EMAIL "E-mail para o Let's Encrypt (avisos de expiração do certificado)"
-    valid_email "$HTTPS_EMAIL" || die "E-mail inválido: ${HTTPS_EMAIL:-vazio}"
-    if [ "$AGREE_TOS" -eq 0 ]; then
-      info "Termos do Let's Encrypt: https://letsencrypt.org/repository/"
-      if [ "$ASSUME_YES" -eq 1 ]; then
-        die "Com --yes, aceite os termos do Let's Encrypt explicitamente com --agree-tos."
-      fi
-      confirm "Você aceita os termos de serviço do Let's Encrypt?" n || die "Sem aceitar os termos não é possível emitir o certificado. Rode de novo sem informar o domínio para instalar sem HTTPS."
-    fi
-    PUBLIC_URL="https://$HTTPS_DOMAIN"
-    ok "URL pública: $PUBLIC_URL"
+    prepare_https
+    PUBLIC_URL="https://$PUBLIC_HOST"
+    [ -n "$API_DOMAIN" ] && ok "Painel: https://$HTTPS_DOMAIN"
+    ok "URL pública (API): $PUBLIC_URL"
   else
     ask PUBLIC_URL "URL pública do gateway (a que seus clientes e a Meta vão chamar)" "${DEFAULT_URL:-http://localhost:3000}"
     PUBLIC_URL="${PUBLIC_URL%/}"
@@ -678,16 +776,8 @@ fi
 # .env mantido, mas o domínio veio por flag (ou a URL já é https e falta o proxy).
 if [ "$CONFIGURE" -eq 0 ]; then
   if [ -n "$HTTPS_DOMAIN" ]; then
-    https_supported || die "Não dá para configurar o HTTPS aqui: $HTTPS_WHY."
-    valid_domain "$HTTPS_DOMAIN" || die "Domínio inválido: $HTTPS_DOMAIN"
-    [ -n "$HTTPS_EMAIL" ] || ask HTTPS_EMAIL "E-mail para o Let's Encrypt"
-    valid_email "$HTTPS_EMAIL" || die "E-mail inválido: ${HTTPS_EMAIL:-vazio}"
-    if [ "$AGREE_TOS" -eq 0 ]; then
-      [ "$ASSUME_YES" -eq 1 ] && die "Com --yes, aceite os termos do Let's Encrypt explicitamente com --agree-tos."
-      info "Termos do Let's Encrypt: https://letsencrypt.org/repository/"
-      confirm "Você aceita os termos de serviço do Let's Encrypt?" n || die "Sem aceitar os termos não é possível emitir o certificado."
-    fi
-    set_env .env PUBLIC_BASE_URL "https://$HTTPS_DOMAIN"
+    prepare_https
+    set_env .env PUBLIC_BASE_URL "https://$PUBLIC_HOST"
     set_env .env BIND_ADDR 127.0.0.1
     ok "PUBLIC_BASE_URL e BIND_ADDR ajustados no .env para o domínio."
   fi
@@ -696,7 +786,7 @@ fi
 docker compose config --quiet 2>/dev/null || die "O docker-compose.yml não validou com este .env. Rode 'docker compose config' em $INSTALL_DIR para ver o erro."
 
 if [ -n "$HTTPS_DOMAIN" ]; then
-  setup_https "$HTTPS_DOMAIN" "$HTTPS_EMAIL" || warn "HTTPS não concluído — a instalação segue; o resumo final diz como repetir."
+  setup_https "$HTTPS_DOMAIN" "$HTTPS_EMAIL" "$API_DOMAIN" || warn "HTTPS não concluído — a instalação segue; o resumo final diz como repetir."
 fi
 
 if [ "$NO_START" -eq 1 ]; then
@@ -771,7 +861,7 @@ GLOBAL_KEY="$(get_env .env GLOBAL_API_KEY)"
 
 printf '\n%s%sWAMux instalado.%s\n\n' "$BOLD" "$GREEN" "$RESET"
 if [ "$HTTPS_DONE" -eq 1 ]; then
-  printf '  Painel        %s\n' "$PUBLIC_URL"
+  printf '  Painel        https://%s\n' "$HTTPS_DOMAIN"
   printf '  API           %s/api/v1\n' "$PUBLIC_URL"
   printf '  Documentação  %s/api/docs\n' "$PUBLIC_URL"
   printf '  Webhook Meta  %s/api/webhooks/cloud/<id-da-instância>\n' "$PUBLIC_URL"
@@ -790,12 +880,12 @@ printf '    docker compose down                parar (os dados ficam nos volumes
 printf '    ./install.sh                       reconfigurar ou atualizar\n'
 printf '\n'
 if [ -n "$HTTPS_DOMAIN" ] && [ "$HTTPS_DONE" -eq 0 ]; then
-  warn "O HTTPS de $HTTPS_DOMAIN não foi concluído, mas o .env já aponta para https://$HTTPS_DOMAIN."
+  warn "O HTTPS de $HTTPS_DOMAIN${API_DOMAIN:+ / $API_DOMAIN} não foi concluído, mas o .env já aponta para $PUBLIC_URL."
   if [ -n "$CERTBOT_CMD" ]; then
     info "Corrija a causa (DNS, porta 80) e repita só a emissão:"
     printf '    %s\n' "$CERTBOT_CMD"
   else
-    info "Corrija a causa e rode o instalador de novo: ./install.sh --domain $HTTPS_DOMAIN --email $HTTPS_EMAIL"
+    info "Corrija a causa e rode o instalador de novo: ./install.sh --domain $HTTPS_DOMAIN${API_DOMAIN:+ --api-domain $API_DOMAIN} --email $HTTPS_EMAIL"
   fi
 elif [ "${PUBLIC_URL#https://}" = "$PUBLIC_URL" ] && [ "$PUBLIC_URL" != "http://localhost:3000" ]; then
   warn "A URL pública não usa HTTPS. A Meta só entrega webhooks e Flows em HTTPS — rode ./install.sh --domain <seu-domínio> para configurar nginx + certificado."
