@@ -6,8 +6,7 @@ packages:
 # padrão. Liberamos para permitir a instalação.
 blockExoticSubdeps: false
 
-# Scripts de build (postinstall) permitidos. puppeteer=false → NÃO baixa o
-# Chromium no install (usamos o binário da imagem Docker via PUPPETEER_*).
+# Scripts de build (postinstall) permitidos.
 allowBuilds:
   '@nestjs/core': true
   # @scarf/scarf é telemetria (via @nestjs/swagger) — NÃO roda o postinstall.
@@ -16,19 +15,13 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   protobufjs: true
-  puppeteer: false
-  # sharp resolve os binários do libvips por optionalDependency de plataforma
-  # (@img/sharp-*); o install script cuida do fallback. Precisa rodar.
+  # sharp (via baileys, thumbnails) resolve os binários do libvips por
+  # optionalDependency de plataforma (@img/sharp-*); o install script cuida do
+  # fallback. Precisa rodar.
   sharp: true
-  # zapo-js só tem um `preinstall` que confere a versão do Node; o `dist` vem
-  # pronto no tarball. Não há nada para compilar — pulamos o script.
-  zapo-js: false
 
 patchedDependencies:
   baileys@7.0.0-rc14: patches/baileys@7.0.0-rc14.patch
-  whatsapp-web.js@1.34.7: patches/whatsapp-web.js@1.34.7.patch
 
 minimumReleaseAgeExclude:
-  - zapo-js@1.6.2
-  - '@zapo-js/fake-server@1.2.0'
   - baileys@7.0.0-rc14

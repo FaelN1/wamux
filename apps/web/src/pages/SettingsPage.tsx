@@ -319,7 +319,7 @@ const SERVICE_ROLE: Record<string, string> = {
   redis: 'rate limit, registro de instâncias e filas',
   rabbitmq: 'transporte de eventos (opcional)',
   whatsmeow: 'sidecar Go (hypermeow, fork do whatsmeow)',
-  ffmpeg: 'nota de voz e áudio de chamadas',
+  ffmpeg: 'nota de voz (ogg/opus)',
 };
 
 function ServiceRow({ service }: { service: SystemService }) {

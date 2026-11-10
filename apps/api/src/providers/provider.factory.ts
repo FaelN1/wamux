@@ -5,10 +5,8 @@ import { IdentityService } from '../identity/identity.service';
 import { WhatsAppProvider, ProviderContext } from './provider.interface';
 import { IdentityMode, ProviderType, SessionStore } from './provider.types';
 import { BaileysProvider } from './baileys/baileys.provider';
-import { WebjsProvider } from './webjs/webjs.provider';
 import { CloudApiProvider } from './cloud/cloud-api.provider';
 import { WhatsmeowProvider } from './whatsmeow/whatsmeow.provider';
-import { ZapoProvider } from './zapo/zapo.provider';
 
 /**
  * Instancia o adapter correto para o tipo de provider escolhido na criação
@@ -27,14 +25,10 @@ export class ProviderFactory {
     switch (type) {
       case ProviderType.BAILEYS:
         return new BaileysProvider(ctx);
-      case ProviderType.WEBJS:
-        return new WebjsProvider(ctx);
       case ProviderType.CLOUD_API:
         return new CloudApiProvider(ctx);
       case ProviderType.WHATSMEOW:
         return new WhatsmeowProvider(ctx);
-      case ProviderType.ZAPO:
-        return new ZapoProvider(ctx);
       default:
         throw new Error(`Provider não suportado: ${type as string}`);
     }
@@ -61,13 +55,6 @@ export class ProviderFactory {
       whatsmeowUrl: whatsmeow.url,
       whatsmeowMasterKey: whatsmeow.masterKey,
       whatsmeowCallbackBaseUrl: whatsmeow.callbackBaseUrl,
-      // A engine `zapo` tem persistência própria (não usa o SessionStore) e
-      // aponta para a MESMA infra, com prefixos próprios. `zapoStoreRedis`
-      // move o estado Signal quente para o Redis (ver zapo-store.ts).
-      db: this.config.get('db'),
-      redis: this.config.get('redis'),
-      zapoStoreRedis: this.config.get<boolean>('zapo.storeRedis'),
-      wam: this.config.get<boolean>('zapo.wam'),
       // Identidade no WhatsApp ("Aparelhos conectados") — lida a cada spawn,
       // então mudanças no painel valem no próximo connect.
       deviceClient: device.client,

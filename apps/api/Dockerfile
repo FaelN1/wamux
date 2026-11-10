@@ -9,13 +9,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
     && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@11.4.0 --activate
 WORKDIR /app
-ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 # ── deps: instala só o subtree da api (+ shared) ──────
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc turbo.json ./
 # patches/ precisa estar presente antes do install — pnpm-workspace.yaml referencia
-# os .patch por caminho relativo (patchedDependencies: baileys, whatsapp-web.js).
+# os .patch por caminho relativo (patchedDependencies: baileys).
 COPY patches/ patches/
 COPY packages/config/package.json packages/config/
 COPY packages/shared/package.json packages/shared/
@@ -31,19 +30,15 @@ COPY apps/api/ apps/api/
 RUN pnpm --filter @wamux/shared build
 RUN pnpm --filter @wamux/api build
 
-# ── runner: imagem final (+ Chromium para o webjs) ────
+# ── runner: imagem final ──────────────────────────────
 FROM node:22-bookworm-slim AS runner
 RUN corepack enable && corepack prepare pnpm@11.4.0 --activate
 WORKDIR /app
 ENV NODE_ENV=production
-# Chromium para o provider whatsapp-web.js. Remova este bloco se não usar webjs.
-# ffmpeg é do provider zapo: o plugin @zapo-js/voip decodifica o áudio a tocar
-# numa chamada invocando o binário do ffmpeg (capabilities.voiceCallAudio).
+# ffmpeg converte áudio em nota de voz (ogg/opus) — ver media/audio-transcode.util.ts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium fonts-liberation ca-certificates ffmpeg \
+      ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # pnpm usa o linker isolated (.pnpm store na raiz + symlinks por pacote).
 # Precisamos do node_modules da RAIZ (store) E do de cada pacote do workspace

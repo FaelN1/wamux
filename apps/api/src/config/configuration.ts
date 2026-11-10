@@ -24,18 +24,6 @@ export default () => ({
     password: process.env.REDIS_PASSWORD ?? '',
   },
 
-  // Engine `zapo` (zapo-js). Ver apps/api/src/providers/zapo/.
-  zapo: {
-    // Move o estado Signal quente (session/preKey/identity/senderKey) para o
-    // Redis; `auth` e `appState` ficam SEMPRE no Postgres. Desligado por
-    // padrão: o Redis do WAMux serve cargas descartáveis e pode estar sem
-    // persistência ou com política de despejo — ver zapo-store.ts.
-    storeRedis: (process.env.ZAPO_STORE_REDIS ?? 'false') === 'true',
-    // Telemetria WAM (paridade de footprint com o WhatsApp Web, anti-ban).
-    // Ligada por padrão; desligue se suspeitar do plugin (ainda em v0.1.x).
-    wam: (process.env.ZAPO_WAM_ENABLED ?? 'true') === 'true',
-  },
-
   // Rate limit de envio por instância (token bucket): ritmo sustentado
   // (perSec) + rajada (burst). Anti-ban.
   rateLimit: {

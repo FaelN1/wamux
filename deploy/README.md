@@ -37,7 +37,7 @@ docs OpenAPI em `/api/docs`. No painel, cole a `GLOBAL_API_KEY` para entrar.
 ## Persistência (volumes)
 
 `pgdata`, `redisdata`, `whatsmeow_sessions`, `whatsmeow_logs`, `rabbitmqdata`,
-`gateway_media`. As sessões do WhatsApp vivem no Postgres (Baileys/webjs) e nos
+`gateway_media`. As sessões do WhatsApp vivem no Postgres (Baileys) e nos
 volumes do sidecar (whatsmeow) — sobrevivem a redeploy sem reparear.
 
 ## Notas de produção
@@ -45,7 +45,7 @@ volumes do sidecar (whatsmeow) — sobrevivem a redeploy sem reparear.
 - **TLS**: ponha um reverse proxy (Traefik, Nginx Proxy Manager, Caddy) na frente
   para HTTPS e aponte `PUBLIC_BASE_URL` para o domínio `https://`. Webhooks de
   entrada (Cloud API) e o callback do sidecar precisam de URL alcançável.
-- **Atualizar versão**: mude `WAMUX_TAG` e faça *redeploy* (Pull image + redeploy).
+- **Atualizar versão**: mude `WAMUX_TAG` e faça _redeploy_ (Pull image + redeploy).
 - **`DB_SYNCHRONIZE=true`**: ainda não há migrations, então o schema é criado no
   boot. Mantenha `true` por enquanto; ao introduzir migrations, troque para `false`.
 - **Arquitetura**: imagens são `amd64` (buildadas no Docker Desktop). Para hosts

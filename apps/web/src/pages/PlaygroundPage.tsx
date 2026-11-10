@@ -634,68 +634,6 @@ const PRESETS: Preset[] = [
     path: '/instances/{id}/calling/action',
     body: '{ "callId": "wacid.XXXX", "action": "terminate" }',
   },
-  // Chamadas de voz reais (VoIP) — engine zapo. A mídia é terminada no
-  // gateway, diferente do Calling (Cloud), que só troca sinalização.
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Listar chamadas',
-    method: 'GET',
-    path: '/instances/{id}/calls',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Ligar',
-    method: 'POST',
-    path: '/instances/{id}/calls',
-    body: '{ "to": "5511999999999" }',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Ligar tocando um áudio',
-    method: 'POST',
-    path: '/instances/{id}/calls',
-    body: '{ "to": "5511999999999", "audioUrl": "https://exemplo.com/saudacao.mp3" }',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Detalhe da chamada',
-    method: 'GET',
-    path: '/instances/{id}/calls/{callId}',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Atender',
-    method: 'POST',
-    path: '/instances/{id}/calls/{callId}/accept',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Rejeitar',
-    method: 'POST',
-    path: '/instances/{id}/calls/{callId}/reject',
-    body: '{ "reason": "declined" }',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Desligar',
-    method: 'POST',
-    path: '/instances/{id}/calls/{callId}/end',
-    body: '{ "reason": "user_ended" }',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Mutar / desmutar',
-    method: 'POST',
-    path: '/instances/{id}/calls/{callId}/mute',
-    body: '{ "muted": true }',
-  },
-  {
-    group: 'Chamadas (VoIP)',
-    label: 'Tocar áudio na chamada',
-    method: 'POST',
-    path: '/instances/{id}/calls/{callId}/audio',
-    body: '{ "url": "https://exemplo.com/mensagem.mp3" }',
-  },
 ];
 
 const STATUS_COLOR = (s: number) =>

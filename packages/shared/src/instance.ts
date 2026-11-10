@@ -11,13 +11,11 @@ export interface ProviderMeta {
 
 export const PROVIDERS: ProviderMeta[] = [
   { value: ProviderType.BAILEYS, label: 'Baileys', official: false },
-  { value: ProviderType.WEBJS, label: 'whatsapp-web.js', official: false },
   { value: ProviderType.CLOUD_API, label: 'Cloud API (oficial)', official: true },
   // O valor do enum segue 'whatsmeow' — é o que está gravado no banco de
   // cada instância e no `replace` do go.mod. Só o RÓTULO muda, porque a
   // lib efetivamente em uso é o fork hypermeow.
   { value: ProviderType.WHATSMEOW, label: 'hypermeow (Go)', official: false },
-  { value: ProviderType.ZAPO, label: 'zapo (VoIP)', official: false },
 ];
 
 /**
@@ -194,24 +192,6 @@ export const WEBHOOK_EVENTS: WebhookEventMeta[] = [
     description: 'Chamada de voz/vídeo recebida.',
     category: 'Presença & Chamadas',
     evolution: 'CALL',
-  },
-  {
-    value: WebhookEvent.CALL_STATE,
-    label: 'Chamada: estado',
-    description: 'VoIP: a chamada mudou de estado (tocando, conectando, ativa).',
-    category: 'Presença & Chamadas',
-  },
-  {
-    value: WebhookEvent.CALL_ENDED,
-    label: 'Chamada: fim',
-    description: 'VoIP: a chamada terminou, com duração e motivo.',
-    category: 'Presença & Chamadas',
-  },
-  {
-    value: WebhookEvent.CALL_AUDIO_FINISHED,
-    label: 'Chamada: áudio tocado',
-    description: 'VoIP: o áudio pré-carregado terminou de tocar na chamada.',
-    category: 'Presença & Chamadas',
   },
   {
     value: WebhookEvent.CALL_CONNECT,

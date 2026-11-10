@@ -2,7 +2,7 @@
 
 /**
  * Cor de uma etiqueta. O WhatsApp trabalha com um índice de paleta (0..19);
- * o Baileys devolve esse índice, o whatsapp-web.js devolve um hex. Guardamos
+ * o Baileys devolve esse índice; outras engines podem devolver um hex. Guardamos
  * ambos no modelo canônico e deixamos o painel decidir como pintar.
  */
 export interface LabelColor {

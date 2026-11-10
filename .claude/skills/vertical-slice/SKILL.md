@@ -22,8 +22,10 @@ WAMux keeps one contract package (`@wamux/shared`) as the single source of truth
    - Component/page under `components/` or `pages/`; reuse shared constants (`PROVIDERS`, `WEBHOOK_EVENTS`, `EVENT_TRANSPORTS`) instead of re-declaring.
 
 ## Notes
+
 - `docs/` is the prioritized backlog; **`docs/16-contrato-compartilhado.md`** consolidates contract additions — check it so multiple features don't conflict on `enums.ts`/`messages.ts`/`provider.interface.ts`.
 - Docs/comments/commits in Portuguese; identifiers English; conventional commits.
 
 ## Verify
+
 `pnpm type-check` + `pnpm lint`. No test suite — exercise runtime-visible changes with the `smoke-stack` skill. Confirm shared was rebuilt.

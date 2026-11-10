@@ -7,8 +7,6 @@
 .env.*
 **/sessions
 **/logs
-**/.wwebjs_auth
-**/.wwebjs_cache
 *.log
 services/whatsmeow/server
 services/whatsmeow/server.exe

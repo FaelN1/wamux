@@ -26,7 +26,6 @@ import { AccountModule } from './account/account.module';
 import { FlowsModule } from './flows/flows.module';
 import { CloudGroupsModule } from './cloud-groups/cloud-groups.module';
 import { CallingModule } from './calling/calling.module';
-import { CallsModule } from './calls/calls.module';
 import { HistoryModule } from './history/history.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
@@ -94,7 +93,6 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
     FlowsModule,
     CloudGroupsModule,
     CallingModule,
-    CallsModule,
     HistoryModule,
     StatsModule,
     HealthModule,

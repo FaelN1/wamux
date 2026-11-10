@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>A API de WhatsApp que fala todas as línguas.</b><br/>
-  Uma única API REST para <b>Baileys</b>, <b>whatsapp-web.js</b>, <b>Cloud API oficial</b>, <b>whatsmeow</b> e <b>zapo</b> —
+  Uma única API REST para <b>Baileys</b>, <b>Cloud API oficial</b> e <b>whatsmeow</b> —
   você escolhe a engine <b>por instância</b>, sem mudar uma linha do seu código.
 </p>
 
@@ -40,21 +40,18 @@ telemetria obrigatória.**
        ◀──eventos── │  Webhook · WebSocket · RabbitMQ                  │
                     └─────────────────────────┬────────────────────────┘
                                               │
-        ┌───────────────┬───────────────┼───────────────┬───────────────┐
-        ▼               ▼               ▼               ▼               ▼
-     Baileys     whatsapp-web.js    Cloud API      whatsmeow          zapo
-   (WebSocket)      (Chromium)     (HTTP · Meta)  (sidecar Go)   (WebSocket+VoIP)
+                  ┌───────────────────────────┼───────────────────────────┐
+                  ▼                           ▼                           ▼
+               Baileys                    Cloud API                   whatsmeow
+             (WebSocket)                (HTTP · Meta)               (sidecar Go)
 ```
 
 ## 💡 Por que WAMux
 
-- 🔀 **Uma API, cinco engines.** Troque de biblioteca mudando **um campo** (`provider`).
+- 🔀 **Uma API, três engines.** Troque de biblioteca mudando **um campo** (`provider`).
   Seu código de integração nunca muda — e uma engine instável deixa de ser um problema de arquitetura.
-- 🔁 **Migre de engine sem reparear.** Credenciais Multi-Device portáveis (Baileys ⇄ whatsmeow ⇄ zapo):
+- 🔁 **Migre de engine sem reparear.** Credenciais Multi-Device portáveis (Baileys ⇄ whatsmeow):
   mova uma conta de uma engine para outra mantendo o device linkado no celular.
-- 📞 **Chamada de voz de verdade.** Na engine `zapo` o áudio é terminado **dentro do gateway**
-  (Opus do WhatsApp ↔ PCM 16 kHz) — ligar, atender, mutar e tocar um áudio, tudo por REST.
-  Não é só sinalização delegada a um WebRTC externo, como na Calling API da Meta.
 - 🔓 **Self-hosted de verdade.** `docker compose up` e pronto — sem porteira de licença,
   ideal para CI/CD, Kubernetes e infraestrutura como código. Boot **não-bloqueante**: a API
   responde em segundos, mesmo com dezenas de sessões religando.
@@ -144,16 +141,6 @@ O engine `cloud` foi de "só texto/mídia" a **paridade ampla com a WhatsApp Clo
 - **Webhook** (HTTP, **assinado com HMAC-SHA256** + anti-replay), **WebSocket** (push em tempo real)
   e **RabbitMQ** (publica no broker). Escolha por instância quais eventos recebe em cada canal.
 
-### Chamadas de voz (VoIP) — engine `zapo`
-
-- **Ligar, atender, rejeitar, desligar e mutar** por REST (`instances/:id/calls`), com o estado
-  de cada chamada em webhook (`call.received`, `call.state`, `call.ended`).
-- **Tocar um áudio na chamada** (mp3/wav/ogg por URL ou base64) — o suficiente para URA e bots
-  de voz sem streaming no seu lado.
-- A mídia é terminada **dentro do gateway** (Opus do WhatsApp ↔ PCM 16 kHz mono). Só áudio
-  trafega: `isVideo` apenas marca a sinalização.
-- Gated por capability — quem não suporta responde `501`, nunca erro genérico.
-
 ### Conexão
 
 - QR com **TTL e proteção contra loop**, **código de pareamento** (8 dígitos, alternativo ao QR),
@@ -179,34 +166,31 @@ O engine `cloud` foi de "só texto/mídia" a **paridade ampla com a WhatsApp Clo
 
 ## 🔌 Engines
 
-| `provider`  | Tipo        | Runtime                     | QR? | Oficial? |
-| ----------- | ----------- | --------------------------- | --- | -------- |
-| `baileys`   | não oficial | Node (WebSocket)            | ✅  | ❌       |
-| `webjs`     | não oficial | Node + Chromium (Puppeteer) | ✅  | ❌       |
-| `cloud`     | **oficial** | HTTP (Meta Graph API)       | ❌  | ✅       |
-| `whatsmeow` | não oficial | **sidecar Go**              | ✅  | ❌       |
-| `zapo`      | não oficial | Node (WebSocket) + WebRTC   | ✅  | ❌       |
+| `provider`  | Tipo        | Runtime               | QR? | Oficial? |
+| ----------- | ----------- | --------------------- | --- | -------- |
+| `baileys`   | não oficial | Node (WebSocket)      | ✅  | ❌       |
+| `cloud`     | **oficial** | HTTP (Meta Graph API) | ❌  | ✅       |
+| `whatsmeow` | não oficial | **sidecar Go**        | ✅  | ❌       |
 
 Cada instância declara suas **capabilities** (`GET /instances/:id/capabilities`) — o recurso que a
 engine não entrega responde de forma uniforme (`501`), nunca com erro genérico. Recorte das
 capabilities mais pedidas:
 
-| Recurso                                        | `baileys` | `webjs`  | `cloud` | `whatsmeow` |  `zapo`  |
-| ---------------------------------------------- | :-------: | :------: | :-----: | :---------: | :------: |
-| Mensagens (texto/mídia/interativos)            |    ✅     |    ✅    |   ✅    |     ✅      |   🟡 ³   |
-| Reagir / editar / apagar mensagem              |    ✅     |    ✅    |  🟡 ¹   |     ✅      |    ✅    |
-| Localização & contato/vCard                    |    ✅     |    ✅    |   ✅    |     ✅      |    ✅    |
-| Status/Stories                                 |    ✅     |    ✅    |   ❌    |     ✅      |    ✅    |
-| Grupos                                         |    ✅     |    ✅    |  🟡 ²   |     ✅      |    ✅    |
-| Comunidades                                    |    ✅     | ❌ `501` |   ❌    |     ✅      |   ✅ ⁵   |
-| Canais (Newsletter)                            |    ✅     |    ✅    |   ❌    |     ✅      |    ✅    |
-| Perfil (conta própria + foto de contato/grupo) |    ✅     |    ✅    |   ✅    |     ✅      |    ✅    |
-| **Chamada de voz (mídia real)**                | ❌ `501`  | ❌ `501` |  🟡 ⁴   |  ❌ `501`   |  **✅**  |
-| Templates / Flows / Conta-WABA / Calling       | ❌ `501`  | ❌ `501` |   ✅    |  ❌ `501`   | ❌ `501` |
+| Recurso                                        | `baileys` | `cloud` | `whatsmeow` |
+| ---------------------------------------------- | :-------: | :-----: | :---------: |
+| Mensagens (texto/mídia/interativos)            |    ✅     |   ✅    |     ✅      |
+| Reagir / editar / apagar mensagem              |    ✅     |  🟡 ¹   |     ✅      |
+| Localização & contato/vCard                    |    ✅     |   ✅    |     ✅      |
+| Status/Stories                                 |    ✅     |   ❌    |     ✅      |
+| Grupos                                         |    ✅     |  🟡 ²   |     ✅      |
+| Comunidades                                    |   ✅ ³    |   ❌    |    ✅ ³     |
+| Canais (Newsletter)                            |    ✅     |   ❌    |     ✅      |
+| Perfil (conta própria + foto de contato/grupo) |    ✅     |   ✅    |     ✅      |
+| Templates / Flows / Conta-WABA / Calling       | ❌ `501`  |   ✅    |  ❌ `501`   |
 
-<sub>¹ Cloud: reagir sim; editar/apagar não (a Meta não expõe). · ² Cloud: Groups API oficial (OBA, máx 8), distinta dos grupos das engines não oficiais. · ³ zapo: botões/lista/PIX não têm builder na lib — respondem `422`, o resto vai. · ⁴ Cloud: a Calling API só troca **sinalização**; a mídia é terminada por um WebRTC externo. Na `zapo` o áudio passa dentro do gateway. · ⁵ zapo é a **única** engine que apaga uma comunidade de verdade (`deactivateCommunity`); baileys e whatsmeow só conseguem sair dela.</sub>
+<sub>¹ Cloud: reagir sim; editar/apagar não (a Meta não expõe). · ² Cloud: Groups API oficial (OBA, máx 8), distinta dos grupos das engines não oficiais. · ³ Apagar uma comunidade só faz a conta **sair** dela: o WhatsApp não expõe "apagar para todos" via multi-device.</sub>
 
-> ⚠️ **Aviso.** Baileys, whatsapp-web.js, whatsmeow e zapo são **não oficiais** e violam os Termos do
+> ⚠️ **Aviso.** Baileys e whatsmeow são **não oficiais** e violam os Termos do
 > WhatsApp — há risco de banimento. Apenas a **Cloud API** é oficial. Use com responsabilidade e
 > prefira a Cloud API para cargas críticas.
 
@@ -269,27 +253,12 @@ curl $API/messages/<id>/status/<messageId> -H "apikey: <apiKey>"
 }
 ```
 
-**Migrar de engine sem reparear** (mantém o device linkado — `baileys ⇄ whatsmeow ⇄ zapo`):
+**Migrar de engine sem reparear** (mantém o device linkado — `baileys ⇄ whatsmeow`):
 
 ```bash
 curl -X POST $API/instances/<id>/provider \
   -H "apikey: <apiKey>" -H "Content-Type: application/json" \
   -d '{ "provider": "whatsmeow", "migrate": true }'
-```
-
-**Ligar para alguém** (engine `zapo`) — opcionalmente já tocando um áudio ao ser atendida:
-
-```bash
-# inicia a chamada; o estado chega por webhook (call.state / call.ended)
-curl -X POST $API/instances/<id>/calls \
-  -H "apikey: <apiKey>" -H "Content-Type: application/json" \
-  -d '{ "to": "5511999999999", "audioUrl": "https://exemplo.com/saudacao.mp3" }'
-
-# tocar outro áudio no meio da chamada, mutar, desligar
-curl -X POST $API/instances/<id>/calls/<callId>/audio \
-  -H "apikey: <apiKey>" -H "Content-Type: application/json" \
-  -d '{ "url": "https://exemplo.com/menu.mp3" }'
-curl -X POST $API/instances/<id>/calls/<callId>/end -H "apikey: <apiKey>"
 ```
 
 ## 📚 API
@@ -307,7 +276,6 @@ schemas e exemplos) fica no **Swagger em `/api/docs`**. Um recorte:
 | **Grupos**              | `GET/POST /instances/:id/groups` · `/:jid/participants` · `/:jid/subject` · `/:jid/invite`                                                              |
 | **Comunidades**         | `GET/POST /instances/:id/communities` · `/:jid/admins` · `/:jid/groups` · `/:jid/announcement`                                                          |
 | **Canais (Newsletter)** | `GET/POST /instances/:id/newsletters` · `/:jid/follow` · `/:jid/message`                                                                                |
-| **Chamadas (VoIP)**     | `GET/POST /instances/:id/calls` · `/:callId/accept` · `/reject` · `/end` · `/mute` · `/audio`                                                           |
 | **Perfil**              | `GET /instances/:id/profile` (conta própria) · `PUT /:id/account/profile` (perfil de negócio, Cloud)                                                    |
 | **Cloud API (oficial)** | `…/templates` (CRUD+envio+analytics) · `…/flows` · `…/account/*` (números·2FA·WABA·analytics) · `…/cloud-groups` · `…/calling/*`                        |
 | **Eventos**             | `PUT /instances/:id/events` (webhook · websocket · rabbitmq, por evento) · `PUT /:id/webhook`                                                           |
@@ -340,7 +308,7 @@ antes de integrar.
 
 **Monorepo pnpm + Turborepo.** NestJS 10 · React (Vite + shadcn/ui) · TypeScript · PostgreSQL ·
 Redis · BullMQ · RabbitMQ · Docker Compose. O provider `whatsmeow` roda como **sidecar Go**;
-o `zapo` traz **WebRTC nativo** (chamadas) e **ffmpeg/sharp** (processamento de mídia).
+o **ffmpeg** da imagem converte áudio em nota de voz.
 
 ```text
 apps/

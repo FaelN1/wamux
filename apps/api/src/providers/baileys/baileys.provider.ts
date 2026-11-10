@@ -63,7 +63,7 @@ function maskProxy(url: string): string {
 }
 
 /**
- * Adapter de referência (Baileys). Socket WebSocket puro, leve, sem Chromium.
+ * Adapter de referência (Baileys). Socket WebSocket puro, leve.
  * Persiste auth no Postgres (via SessionStore) → sobrevive a restart.
  */
 export class BaileysProvider extends BaseProvider {
@@ -836,10 +836,9 @@ export class BaileysProvider extends BaseProvider {
   }
   /**
    * Baileys não tem checagem de elegibilidade client-side (ao contrário do
-   * webjs, que checa `isNewsletterCreationEnabled()`, ou do whatsmeow, que
-   * tem `AcceptTOSNotice`) — quando a conta não pode criar canal, a lib só
+   * whatsmeow, que tem `AcceptTOSNotice`) — quando a conta não pode criar canal, a lib só
    * propaga o erro cru da query GraphQL da Meta ("Bad Request", sem detalhe).
-   * Sem workaround programático (ver docs/newsletter-contract-handoff.md) —
+   * Sem workaround programático —
    * só troca por uma mensagem de negócio acionável.
    */
   async createNewsletter(input: CreateNewsletterInput): Promise<NewsletterInfo> {

@@ -1,15 +1,15 @@
 ---
 name: provider-adapter
-description: Use when implementing or debugging a WhatsApp engine adapter under apps/api/src/providers/{baileys,webjs,cloud,whatsmeow,zapo}/. Enforces the adapter + canonical-model contract and the golden rule that no engine library leaks outside providers/. Invoke for adapter bugs, adding capabilities to an existing engine, or wiring a new one.
+description: Use when implementing or debugging a WhatsApp engine adapter under apps/api/src/providers/{baileys,cloud,whatsmeow}/. Enforces the adapter + canonical-model contract and the golden rule that no engine library leaks outside providers/. Invoke for adapter bugs, adding capabilities to an existing engine, or wiring a new one.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
-You implement and debug WhatsApp engine **adapters** in the WAMux gateway. Each engine (Baileys, whatsapp-web.js, Cloud API, whatsmeow) is an adapter that translates its library's dialect into WAMux's canonical model.
+You implement and debug WhatsApp engine **adapters** in the WAMux gateway. Each engine (Baileys, Cloud API, whatsmeow) is an adapter that translates its library's dialect into WAMux's canonical model.
 
 ## The contract (never break it)
 
 - Every adapter extends `BaseProvider` and satisfies `WhatsAppProvider` in `apps/api/src/providers/provider.interface.ts`. The canonical model lives in `provider.types.ts`.
-- **Golden rule:** nothing outside `apps/api/src/providers/` may import or know about an engine library (baileys, whatsapp-web.js, axios-to-Meta, the Go sidecar). New concepts are first canonical (contract/types/enums), then translated by the adapter.
+- **Golden rule:** nothing outside `apps/api/src/providers/` may import or know about an engine library (baileys, axios-to-Meta, the Go sidecar). New concepts are first canonical (contract/types/enums), then translated by the adapter.
 - Emit events through the typed helpers on `BaseProvider`: `setStatus`, `emitTyped('message'|'message.status'|'error')`, `emitWebhook(event, payload)` for the long-tail webhook events. The `InstanceManager` subscribes and fans out — the adapter never talks to webhooks/queues directly.
 - Lifecycle semantics matter: `destroy()` releases sockets/browser **without** logging out (redeploy-safe); `logout()` drops credentials (re-pair needed). `initialize()` is idempotent and restores persisted sessions via the injected `sessionStore`.
 - QR-less engines (Cloud API) return `null` from `getQRCode()`. HTTP-inbound engines (cloud, whatsmeow) implement `handleInboundWebhook`; socket engines leave it as the no-op default.

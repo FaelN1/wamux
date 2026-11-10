@@ -6,7 +6,7 @@ import { REDIS_CLIENT } from '../redis/redis.module';
 /**
  * Resolve a config anti-ban efetiva de uma instância e mantém, no Redis, o
  * estado de curto prazo: quota diária (warmup) e flag de auto-throttle.
- * Camada ACIMA do provider — o mesmo cálculo vale para baileys/webjs/whatsmeow.
+ * Camada ACIMA do provider — o mesmo cálculo vale para baileys/whatsmeow.
  */
 @Injectable()
 export class AntiBanService {
@@ -35,7 +35,10 @@ export class AntiBanService {
   }
 
   /** Params do token bucket — aplica o freio de auto-throttle quando ativo. */
-  async rate(instanceId: string, cfg: AntiBanConfig): Promise<{ capacity: number; refillPerSec: number }> {
+  async rate(
+    instanceId: string,
+    cfg: AntiBanConfig,
+  ): Promise<{ capacity: number; refillPerSec: number }> {
     const factor = (await this.isThrottled(instanceId)) ? cfg.autoThrottle.reduceFactor : 1;
     const perMinute = Math.max(1, Math.floor(cfg.limits.perMinute * factor));
     return {
@@ -49,7 +52,10 @@ export class AntiBanService {
   }
 
   /** Consome 1 do teto diário. false quando estourou (warmup / perDay). */
-  async tryConsumeDaily(instanceId: string, cap: number): Promise<{ allowed: boolean; used: number }> {
+  async tryConsumeDaily(
+    instanceId: string,
+    cap: number,
+  ): Promise<{ allowed: boolean; used: number }> {
     const key = `ab:day:${instanceId}:${new Date().toISOString().slice(0, 10)}`;
     const used = await this.redis.incr(key);
     if (used === 1) await this.redis.expire(key, 26 * 60 * 60);

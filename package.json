@@ -1,8 +1,8 @@
 {
   "name": "wamux",
-  "version": "2.0.2",
+  "version": "2.0.0",
   "private": true,
-  "description": "WAMux — WhatsApp multiplexer: uma API, várias engines (Baileys, whatsapp-web.js, Cloud API oficial, whatsmeow)",
+  "description": "WAMux — WhatsApp multiplexer: uma API, várias engines (Baileys, Cloud API oficial, whatsmeow)",
   "engines": {
     "node": ">=20",
     "pnpm": ">=10"

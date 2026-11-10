@@ -15,13 +15,15 @@ WAMux picks the engine per instance. Adding one is a fixed set of touchpoints. D
 4. **Adapter** — create `apps/api/src/providers/newengine/newengine.provider.ts` extending `BaseProvider` and implementing `WhatsAppProvider` (`apps/api/src/providers/provider.interface.ts`). Read a sibling adapter first:
    - socket engine (own inbound) → model on `baileys/`;
    - HTTP-inbound / federated engine → model on `whatsmeow/` or `cloud/` and implement `handleInboundWebhook`.
-   Use the base helpers (`setStatus`, `emitTyped`, `emitWebhook`) and the injected `sessionStore` for persistence. QR-less engines return `null` from `getQRCode()`.
+     Use the base helpers (`setStatus`, `emitTyped`, `emitWebhook`) and the injected `sessionStore` for persistence. QR-less engines return `null` from `getQRCode()`.
 5. **Factory** — `apps/api/src/providers/provider.factory.ts`: add a `case ProviderType.NEWENGINE: return new NewengineProvider(ctx);`. Adapters are `new`ed here, **not** registered as Nest providers, so `providers.module.ts` needs no change.
 6. **Config/env (if needed)** — inject defaults in `provider.factory.ts#buildContext` and read them from `config/configuration.ts`; document new vars in `.env.example` (and `docker-compose.yml` if it runs in a container).
 
 ## Golden rule
+
 The engine library may be imported **only** inside `apps/api/src/providers/newengine/`. Everything else deals with the canonical `WhatsAppProvider` contract.
 
 ## Verify
+
 - `pnpm --filter @wamux/api type-check` and `pnpm lint`.
 - Runtime: follow the `smoke-stack` skill — create an instance with the new `provider`, connect, (scan QR if applicable), send a text.

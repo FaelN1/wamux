@@ -1,6 +1,6 @@
 /**
  * Templates HSM da WhatsApp Cloud API (Meta). Cloud-only — as engines não
- * oficiais (baileys/webjs/whatsmeow) ficam 501. Gated por `capabilities.templates`.
+ * oficiais (baileys/whatsmeow) ficam 501. Gated por `capabilities.templates`.
  */
 
 export type TemplateCategory = 'AUTHENTICATION' | 'MARKETING' | 'UTILITY';

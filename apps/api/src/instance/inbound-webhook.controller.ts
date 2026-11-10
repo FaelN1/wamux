@@ -19,7 +19,7 @@ import { InstanceManagerService } from './instance-manager.service';
  *  - whatsmeow (sidecar wuzapi) entrega mensagens aqui.
  *
  * O payload é repassado ao provider da instância, que normaliza e emite o
- * evento `message` — daí segue o mesmo fluxo do Baileys/webjs.
+ * evento `message` — daí segue o mesmo fluxo do Baileys.
  *
  * Estas rotas são públicas (Meta/wuzapi não enviam nossa API key) — daí NÃO
  * levam @ApiSecurity('apikey'); a autenticação é feita por verify_token

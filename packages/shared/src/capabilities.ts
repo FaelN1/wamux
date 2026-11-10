@@ -22,15 +22,11 @@ export interface ProviderCapabilities {
   markRead?: boolean;
   /** download de mídia sob demanda / formatos ricos. */
   media?: boolean;
-  /** a engine processa a mídia antes de subir: detecta mimetype por magic bytes
-   *  e gera thumbnail/dimensões/waveform. Sem isso a mídia chega como anexo
-   *  simples e o mimetype passa a ser obrigatório no envio. */
-  mediaProcessing?: boolean;
   /** canais (@newsletter). */
   newsletter?: boolean;
-  /** envio de mídia em canal — separado de `newsletter` porque é instável/incompleto a montante em mais de uma engine (ver docs/newsletter-contract-handoff.md). */
+  /** envio de mídia em canal — separado de `newsletter` porque é instável/incompleto a montante em mais de uma engine. */
   newsletterMedia?: boolean;
-  /** tipos de mídia que a engine NÃO aceita em canal mesmo com `newsletterMedia: true` (limitação estrutural pontual, ex.: document no webjs). */
+  /** tipos de mídia que a engine NÃO aceita em canal mesmo com `newsletterMedia: true` (limitação estrutural pontual). */
   newsletterUnsupportedMediaTypes?: Array<'image' | 'video' | 'audio' | 'document' | 'sticker'>;
   /** envio de enquete em canal. */
   newsletterPoll?: boolean;
@@ -74,11 +70,6 @@ export interface ProviderCapabilities {
   cloudGroups?: boolean;
   /** chamadas de voz (WhatsApp Business Calling API — só sinalização). */
   calling?: boolean;
-  /** chamadas de voz REAIS com mídia terminada no gateway (VoIP — engine zapo).
-   *  Diferente de `calling`, que só troca sinalização e delega a mídia. */
-  voiceCalls?: boolean;
-  /** tocar um arquivo de áudio dentro de uma chamada ativa (precisa de ffmpeg). */
-  voiceCallAudio?: boolean;
   // ── interativos — granular por tipo ──
   poll?: boolean;
   pollResults?: boolean;

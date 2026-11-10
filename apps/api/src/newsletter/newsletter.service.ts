@@ -35,7 +35,7 @@ export class NewsletterService {
    * de `newsletter` — nenhuma engine suportada garante os dois de forma
    * uniforme (ver docs/newsletter-contract-handoff.md pro detalhe por
    * engine/tipo, inclusive `newsletterUnsupportedMediaTypes` pra exceções
-   * pontuais dentro de `newsletterMedia: true`, ex.: document no webjs).
+   * pontuais dentro de `newsletterMedia: true`).
    */
   async sendMessage(id: string, jid: string, dto: SendNewsletterMessageDto): Promise<SendResult> {
     const hasMedia = Boolean(dto.mediaUrl || dto.mediaBase64);

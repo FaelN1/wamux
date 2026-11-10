@@ -5,7 +5,7 @@ import { ChatType } from '@wamux/shared';
  * `providers/jid.util.ts#classifyJid`, duplicada aqui (não engine-specific,
  * só convenção de protocolo) pra não criar dependência de `inbox/` em
  * `providers/`. `NormalizedMessage.chatType` já vem preenchido só pra
- * baileys/webjs hoje — o store não pode depender dele existir.
+ * baileys hoje — o store não pode depender dele existir.
  */
 export function chatTypeFromJid(jid: string): ChatType {
   if (jid.endsWith('@newsletter')) return 'newsletter';

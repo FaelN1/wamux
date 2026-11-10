@@ -12,7 +12,7 @@ Cada lib fala um "dialeto". Definimos **um modelo normalizado**
 ([`provider.types.ts`](apps/api/src/providers/provider.types.ts)) e um contrato
 ([`WhatsAppProvider`](apps/api/src/providers/provider.interface.ts)). Cada lib é um
 adapter que traduz do seu dialeto para o canônico. Nada fora de
-`apps/api/src/providers/*` conhece Baileys/webjs/Cloud/whatsmeow.
+`apps/api/src/providers/*` conhece Baileys/Cloud/whatsmeow.
 
 Recursos opcionais (etiquetas, grupos, canais/newsletter, **comunidades**) são
 declarados em `ProviderCapabilities` e checados pelo serviço REST correspondente
@@ -20,19 +20,17 @@ declarados em `ProviderCapabilities` e checados pelo serviço REST correspondent
 provider — engine sem suporte responde **501** de forma uniforme, nunca 500.
 Comunidades (grupo-pai + subgrupos vinculados) têm adapter em `baileys` (nativo,
 socket `w:g2`) e `whatsmeow` (via CRUD nativo do sidecar Go, `/community`);
-`webjs` fica 501 de propósito — a lib não tem API de Community (tentativa dos
-mantenedores abandonada) — e `cloud` (Meta) também 501 (fora do escopo da Cloud
-API oficial). Cada engine tem lacunas pontuais documentadas nos adapters e em
-`docs/community-contract-handoff.md`.
+`cloud` (Meta) fica 501 (fora do escopo da Cloud API oficial). Cada engine tem
+lacunas pontuais documentadas nos adapters.
 
 ```
              ┌───────────────── WhatsAppProvider (contrato) ─────────────────┐
              │ initialize · getQRCode · sendText · sendMedia · logout ·      │
              │ destroy · handleInboundWebhook · on(event)                    │
              └───────────────────────────────────────────────────────────────┘
-                  ▲            ▲                ▲                  ▲
-           BaileysProvider WebjsProvider  CloudApiProvider  WhatsmeowProvider
-           (socket WS)   (Chromium)      (HTTP Meta)      (HTTP → sidecar Go)
+                  ▲                    ▲                      ▲
+           BaileysProvider      CloudApiProvider       WhatsmeowProvider
+           (socket WS)          (HTTP Meta)            (HTTP → sidecar Go)
 ```
 
 ## O desafio de robustez: conexões stateful
@@ -60,7 +58,7 @@ balancear cada request. Solução:
 
 **Entrada:**
 
-- Baileys/webjs: chega no socket → adapter normaliza → `emit('message')` →
+- Baileys: chega no socket → adapter normaliza → `emit('message')` →
   `InstanceManager` → `WebhookService.dispatch` → **fila BullMQ** →
   `WebhookProcessor` entrega no webhook do cliente (retry/backoff/DLQ).
 - Cloud/whatsmeow: chega por HTTP em `/webhooks/{cloud,whatsmeow}/:id` →
@@ -85,7 +83,7 @@ para persistir/restaurar a sessão — é o que evita reparear o QR a cada resta
 - [x] Persistência de sessão → sobrevive a restart/deploy.
 - [x] Registry distribuído + heartbeat + reatribuição de órfãs.
 - [x] Filas com retry exponencial + DLQ para webhooks.
-- [x] Reconexão automática (Baileys/webjs).
+- [x] Reconexão automática (Baileys).
 - [x] Graceful shutdown (desconecta sem deslogar, libera registry).
 - [x] Guards de API key (global admin + por instância).
 - [x] Health check (Postgres + Redis) e logs estruturados (pino).
@@ -99,7 +97,7 @@ para persistir/restaurar a sessão — é o que evita reparear o QR a cada resta
 ```
 apps/api/src/
   providers/            # núcleo: contrato + adapters + factory + registry
-    baileys/  webjs/  cloud/  whatsmeow/
+    baileys/  cloud/  whatsmeow/
   instance/             # CRUD + motor de runtime (manager) + webhooks inbound
   groups/  newsletter/  communities/  # feature modules capability-gated (ver acima)
   messaging/            # envio (fachada + fila outbound BullMQ)
@@ -118,10 +116,9 @@ services/whatsmeow/     # sidecar Go (Fiber + whatsmeow) — ver CLAUDE.md de l�
 
 1. Fila **outbound** por instância (rate-limit + idempotência).
 2. Completar Cloud API (upload de mídia base64, mapeamento de status/ack).
-3. `webjs`: `RemoteAuth` com Store no `SessionStore`.
-4. `whatsmeow`: ✅ integrado ao serviço Go próprio (`wamux_go`, em
+3. `whatsmeow`: ✅ integrado ao serviço Go próprio (`wamux_go`, em
    `services/whatsmeow/`) — o adapter auto-provisiona a instância e configura o
    webhook de retorno. Fonte da verdade do whatsmeow é o serviço Go; o gateway
    só federa/normaliza (sem dupla gestão de instância/fila/webhook).
-5. Migrations do TypeORM (`DB_SYNCHRONIZE=false` em produção).
-6. Roteamento sticky multi-worker + métricas.
+4. Migrations do TypeORM (`DB_SYNCHRONIZE=false` em produção).
+5. Roteamento sticky multi-worker + métricas.

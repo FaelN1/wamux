@@ -15,8 +15,6 @@ build/
 
 # sessões / auth persistidas em disco (fallback)
 apps/api/sessions/
-.wwebjs_auth/
-.wwebjs_cache/
 
 # artefatos do serviço Go
 services/whatsmeow/server

@@ -66,8 +66,8 @@ export function ChangeProviderModal({
             <div>
               <Label htmlFor="cp-migrate">Migrar sem reparear</Label>
               <p className="text-xs text-muted-foreground">
-                Experimental — reaproveita as credenciais (Baileys ⇄ hypermeow ⇄ zapo). Senão, gera
-                QR novo.
+                Experimental — reaproveita as credenciais (Baileys ⇄ hypermeow). Senão, gera QR
+                novo.
               </p>
             </div>
             <Switch id="cp-migrate" checked={migrate} onCheckedChange={setMigrate} />

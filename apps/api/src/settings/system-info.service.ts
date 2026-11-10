@@ -21,7 +21,7 @@ const PROBE_TIMEOUT_MS = 3_000;
  * (precisa ser rápido e decidir de-pé/caiu por postgres+redis), este é
  * diagnóstico para humanos e inclui dependências cuja ausência degrada
  * funcionalidades sem derrubar a API — RabbitMQ, o sidecar Go e o ffmpeg
- * (nota de voz e áudio de chamada).
+ * (nota de voz).
  */
 @Injectable()
 export class SystemInfoService {
@@ -115,7 +115,7 @@ export class SystemInfoService {
     return base;
   }
 
-  /** ffmpeg é o que viabiliza nota de voz (ogg/opus) e o áudio das chamadas. */
+  /** ffmpeg é o que viabiliza nota de voz (ogg/opus). */
   private checkFfmpeg(): Promise<string | undefined> {
     return new Promise((resolve, reject) => {
       const proc = spawn('ffmpeg', ['-version']);

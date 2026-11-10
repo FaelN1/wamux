@@ -298,7 +298,7 @@ export class InstanceController {
   @ApiOperation({
     summary: 'Cria uma instância',
     description:
-      'Cria a instância e fixa o provider (baileys | webjs | cloud | whatsmeow). ' +
+      'Cria a instância e fixa o provider (baileys | cloud | whatsmeow). ' +
       'Requer a GLOBAL_API_KEY. A apiKey própria da instância só é retornada aqui.',
   })
   @ApiCreatedResponse({

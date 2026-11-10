@@ -23,14 +23,6 @@ const PROVIDER_CONFIG: Record<Provider, ConfigField[]> = {
       hint: 'Opcional — http/https/socks. Anti-ban / geo.',
     },
   ],
-  webjs: [
-    {
-      key: 'proxyUrl',
-      label: 'Proxy URL',
-      placeholder: 'http://host:porta',
-      hint: 'Opcional — sem user:senha (limitação do Chrome).',
-    },
-  ],
   cloud: [
     { key: 'phoneNumberId', label: 'Phone Number ID', placeholder: '123456789012345' },
     { key: 'accessToken', label: 'Access Token', placeholder: 'EAAG...' },
@@ -50,21 +42,6 @@ const PROVIDER_CONFIG: Record<Provider, ConfigField[]> = {
       label: 'Proxy URL',
       placeholder: 'http://user:senha@host:porta',
       hint: 'Opcional.',
-    },
-  ],
-  zapo: [
-    {
-      key: 'deviceClient',
-      label: 'Nome do dispositivo',
-      placeholder: 'WAMux',
-      hint: 'Como aparece em "Aparelhos conectados". Opcional.',
-    },
-    { key: 'deviceBrowser', label: 'Navegador', placeholder: 'chrome', hint: 'Opcional.' },
-    {
-      key: 'maxConcurrentCalls',
-      label: 'Chamadas simultâneas',
-      placeholder: '1',
-      hint: 'Quantas chamadas de voz podem ficar ativas ao mesmo tempo. Opcional.',
     },
   ],
 };

@@ -10,7 +10,7 @@ export function buildSwaggerConfig(): Omit<OpenAPIObject, 'paths'> {
     new DocumentBuilder()
       .setTitle('flush API')
       .setDescription(
-        'WhatsApp multiplexer — uma API REST, várias engines (baileys, webjs, cloud, whatsmeow). ' +
+        'WhatsApp multiplexer — uma API REST, várias engines (baileys, cloud, whatsmeow). ' +
           'Self-hosted, sem licença, sem telemetria obrigatória. ' +
           'Autenticação: header `apikey` com a GLOBAL_API_KEY (admin) ou a apiKey da instância.',
       )

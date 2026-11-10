@@ -421,28 +421,9 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
     await this.instances.updateStatus(instanceId, ConnectionStatus.LOGGED_OUT, null);
   }
 
-  /**
-   * Apaga as credenciais persistidas da instância: o `SessionStore` do gateway
-   * (Baileys/webjs) e, quando a engine guarda a sessão por conta própria
-   * (zapo), também o store dela — via o hook opcional `clearSession`.
-   *
-   * `engine` permite limpar uma engine que NÃO é a atual do registro (usado na
-   * troca de provider, onde origem e destino precisam ficar limpas). O adapter
-   * é só um `new` da factory, sem I/O, então criar um descartável é barato.
-   */
-  private async clearPersistedSession(instanceId: string, engine?: ProviderType): Promise<void> {
+  /** Apaga as credenciais persistidas da instância (`SessionStore` do gateway). */
+  private async clearPersistedSession(instanceId: string): Promise<void> {
     await this.sessions.clear(instanceId);
-    try {
-      const inst = await this.instances.findOne(instanceId);
-      const type = engine ?? inst.provider;
-      const ctx = this.factory.buildContext(instanceId, inst.config, this.sessions);
-      await this.factory.create(type, ctx).clearSession?.();
-    } catch (e) {
-      // Nunca bloqueia logout/repareamento por causa da limpeza da engine.
-      this.logger.warn(
-        `Limpeza da sessão própria da engine falhou (${instanceId}): ${(e as Error).message}`,
-      );
-    }
   }
 
   /** Libera o provider vivo sem deslogar (usado ao remover/realocar). */
@@ -538,11 +519,8 @@ export class InstanceManagerService implements OnModuleInit, OnApplicationShutdo
       };
     }
 
-    // Repareamento: limpa a sessão; a próxima conexão gera QR. Limpa as DUAS
-    // engines — a de origem (que pode ter store própria) e a de destino (que
-    // pode ter credenciais antigas de uma passagem anterior por ela).
-    await this.clearPersistedSession(instanceId, inst.provider);
-    await this.clearPersistedSession(instanceId, target);
+    // Repareamento: limpa a sessão; a próxima conexão gera QR.
+    await this.clearPersistedSession(instanceId);
     await this.instances.updateStatus(instanceId, ConnectionStatus.DISCONNECTED, null);
     this.logger.log(`Troca ${inst.provider} → ${target} em "${updated.name}" (reparear)`);
     return {

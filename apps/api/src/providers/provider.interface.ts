@@ -59,10 +59,6 @@ import {
   SendFlowInput,
   FlowMetricsQuery,
   ConnectCallInput,
-  StartVoiceCallInput,
-  PlayVoiceAudioInput,
-  VoiceCallInfo,
-  VoiceCallEndReason,
   ProviderCapabilities,
   ProviderType,
   ReactMessageInput,
@@ -208,24 +204,11 @@ export interface WhatsAppProvider {
 
   /**
    * Processa um webhook de ENTRADA vindo da fonte do provider.
-   * Providers com socket próprio (Baileys/webjs) não usam isto — recebem via
+   * Providers com socket próprio (Baileys) não usam isto — recebem via
    * socket. Cloud API (Meta) e whatsmeow (sidecar) recebem mensagens por HTTP,
    * então normalizam aqui e emitem o evento `message`.
    */
   handleInboundWebhook(payload: unknown, meta?: Record<string, unknown>): Promise<void>;
-
-  /**
-   * Apaga as credenciais que ESTA engine persiste por conta própria.
-   *
-   * Só é implementado por engines que não guardam a sessão no `SessionStore`
-   * do gateway (hoje: `zapo`, que tem store própria por domínio). O manager
-   * chama isto junto do `sessions.clear()` nos caminhos de repareamento e
-   * logout — sem ele, uma engine com store própria reconectaria o device
-   * antigo silenciosamente em vez de gerar um QR novo.
-   *
-   * Deve ser idempotente e não pode falhar quando não há sessão.
-   */
-  clearSession?(): Promise<void>;
 
   /** A engine suporta export/import de credenciais MD (trocar engine sem QR)? */
   readonly portableCredentials: boolean;
@@ -408,21 +391,6 @@ export interface WhatsAppProvider {
   getCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
   resetCloudGroupInvite?(groupId: string): Promise<{ code: string; url: string }>;
   removeCloudGroupParticipant?(groupId: string, waId: string): Promise<void>;
-
-  // ── chamadas de voz REAIS (gated por capabilities.voiceCalls) ──
-  /**
-   * Mídia terminada dentro do gateway — diferente de `connectCall` (Cloud),
-   * que só troca sinalização. Hoje só a engine `zapo` implementa.
-   */
-  startVoiceCall?(input: StartVoiceCallInput): Promise<VoiceCallInfo>;
-  acceptVoiceCall?(callId: string): Promise<VoiceCallInfo>;
-  rejectVoiceCall?(callId: string, reason?: VoiceCallEndReason): Promise<void>;
-  endVoiceCall?(callId: string, reason?: VoiceCallEndReason): Promise<void>;
-  setVoiceCallMute?(callId: string, muted: boolean): Promise<void>;
-  /** Toca um áudio na chamada ativa (gated por capabilities.voiceCallAudio). */
-  playVoiceCallAudio?(callId: string, input: PlayVoiceAudioInput): Promise<void>;
-  listVoiceCalls?(): VoiceCallInfo[];
-  getVoiceCall?(callId: string): VoiceCallInfo | null;
 
   // ── calling (gated por capabilities.calling — Cloud-only, só sinalização) ──
   configureCalling?(settings: unknown): Promise<void>;

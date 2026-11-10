@@ -9,8 +9,7 @@ export interface B64KeyPair {
  * entre engines que implementam o protocolo** (Baileys ⇄ whatsmeow). Permite
  * trocar de engine mantendo o device linkado — sem reescanear o QR.
  *
- * NÃO se aplica ao `webjs` (sessão de navegador/IndexedDB, não extraível) nem à
- * `cloud` (API oficial, sem device/QR). Todos os binários são base64.
+ * NÃO se aplica à `cloud` (API oficial, sem device/QR). Todos os binários são base64.
  *
  * ⚠️ Experimental: migra a IDENTIDADE do device (mantém linkado). As sessões
  * Signal por contato re-sincronizam depois. Migração é sempre SEQUENCIAL

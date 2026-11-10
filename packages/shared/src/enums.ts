@@ -1,10 +1,8 @@
 /** Engines suportadas — escolhida por instância. */
 export enum ProviderType {
   BAILEYS = 'baileys',
-  WEBJS = 'webjs',
   CLOUD_API = 'cloud',
   WHATSMEOW = 'whatsmeow',
-  ZAPO = 'zapo',
 }
 
 export enum ConnectionStatus {
@@ -58,7 +56,7 @@ export enum MessageAckStatus {
  * `entidade.ação` (minúsculo, com ponto).
  * Nem toda engine emite todos: os avançados (chats,
  * grupos, contatos, presença, chamada, etiquetas) são de nível de protocolo
- * e hoje saem no Baileys; Cloud API/webjs têm superfícies mais estreitas.
+ * e hoje saem no Baileys; Cloud API tem superfície mais estreita.
  */
 export enum WebhookEvent {
   // conexão & ciclo de vida
@@ -99,13 +97,6 @@ export enum WebhookEvent {
   CALL_TERMINATE = 'call.terminate',
   CALL_PERMISSION_REPLY = 'call.permission_reply',
   CALL_SETTINGS_UPDATE = 'call.settings_update',
-  // chamadas de voz reais (VoIP — engine zapo)
-  /** a chamada mudou de estado (ringing → connecting → active → ended). */
-  CALL_STATE = 'call.state',
-  /** a chamada terminou (qualquer motivo), com duração e motivo. */
-  CALL_ENDED = 'call.ended',
-  /** o áudio pré-carregado terminou de tocar na chamada. */
-  CALL_AUDIO_FINISHED = 'call.audio_finished',
   // etiquetas
   LABELS_EDIT = 'labels.edit',
   LABELS_ASSOCIATION = 'labels.association',

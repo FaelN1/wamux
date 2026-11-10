@@ -10,7 +10,7 @@ export function classifyJid(jidOrNumber: string): ChatType {
   if (jid.endsWith('@newsletter')) return 'newsletter';
   if (jid.endsWith('@g.us')) return 'group';
   if (jid.endsWith('@broadcast')) return 'broadcast'; // inclui status@broadcast
-  // usuário: @s.whatsapp.net, @c.us (webjs) e @lid
+  // usuário: @s.whatsapp.net, @c.us e @lid
   return 'user';
 }
 

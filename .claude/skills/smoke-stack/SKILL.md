@@ -45,7 +45,8 @@ curl -X PUT http://localhost:3000/api/instances/$ID/webhook \
 ```
 
 ## Per-engine notes
-- `baileys` / `webjs` / `whatsmeow` need QR pairing; `cloud` needs `config.phoneNumberId` + `config.accessToken` and no QR.
+
+- `baileys` / `whatsmeow` need QR pairing; `cloud` needs `config.phoneNumberId` + `config.accessToken` and no QR.
 - `whatsmeow` is federated to the Go sidecar — check its logs/docs at `:8081` if pairing stalls.
 - Rebuild only what changed: `docker compose up --build gateway` after gateway edits.
 
