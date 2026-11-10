@@ -97,14 +97,21 @@ O engine `cloud` foi de "só texto/mídia" a **paridade ampla com a WhatsApp Clo
 
 - **Templates HSM**: CRUD, **envio com parâmetros** (posicional/nomeado), analytics e webhooks
   de status/qualidade/categoria.
-- **Flows** (formulários no chat): CRUD com `validation_errors`, publicar/depreciar, envio e métricas.
+- **Flows** (formulários no chat) de ponta a ponta: CRUD com `validation_errors`, publicar/depreciar,
+  envio com token de correlação, **endpoint de troca de dados criptografado** (o gateway cuida de
+  RSA/AES e repassa JSON puro ao seu serviço), **sessões persistidas** e evento `flow.response`.
+  Guia: [`docs/whatsapp-flows.md`](docs/whatsapp-flows.md).
 - **Perfil de negócio & conta/WABA**: editar perfil, listar números, registro/verificação/**2FA**,
-  info da WABA, subscrição de webhooks e **analytics** de mensagens e conversas.
+  info da WABA, subscrição e **override de webhook por número**, e **analytics** de mensagens e
+  de preço por mensagem (`pricing_analytics`).
 - **Grupos da Cloud API** (Groups API — OBA, máx 8) e **Calling** (só **sinalização**; a mídia
   WebRTC é externa ao gateway).
 - **Interativos nativos** (botões/listas/CTA), **mark-read + typing**, **block/unblock**,
   **download de mídia** e webhook de entrada **roteado por `change.field`** (mensagens, status,
-  respostas de interativo, templates, grupos e chamadas).
+  respostas de interativo, templates, grupos, chamadas, Flows e eventos de conta).
+- **Graph API v26.0**, com suporte a **BSUID** (identificador com escopo de negócio: mensagens de
+  usuários sem número exposto e envio por `recipient`), status `played`, preço por mensagem nos
+  status e **erros da Meta repassados** com código/subcódigo em vez de um 500 genérico.
 
 > A integração Cloud segue os JSON oficiais da Meta; validação ao vivo pende de uma conta Cloud
 > conectada. Os _bodies_ da Groups API estão marcados como **a confirmar** contra conta real OBA.
@@ -151,6 +158,8 @@ O engine `cloud` foi de "só texto/mídia" a **paridade ampla com a WhatsApp Clo
 
 - **Whitelist/blacklist de JIDs** (entrada e/ou saída), **auth por instância à prova de bypass**,
   segredo de webhook rotacionável.
+- **Webhooks de entrada autenticados**: `X-Hub-Signature-256` da Meta (com `CLOUD_API_APP_SECRET`)
+  e callbacks do sidecar whatsmeow assinados por HMAC — payload forjado é rejeitado com 401.
 - **Perfis de risco** (conservador/normal/agressivo) com **warmup** de conta nova, **auto-throttle**
   por sinais de risco e **checagem de número protegida** (teto + cache + rate-limit).
 
