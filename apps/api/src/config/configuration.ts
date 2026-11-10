@@ -2,6 +2,15 @@
  * Configuração central lida de variáveis de ambiente (.env).
  * Consumida via ConfigService em toda a aplicação.
  */
+
+/** TTL (s) do cache de retry do Baileys: inteiro ≥ 0; ausente/inválido → 24h. */
+function parseRetryCacheTtl(raw: string | undefined): number {
+  const fallback = 86_400;
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
 export default () => ({
   env: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '3000', 10),
@@ -73,6 +82,14 @@ export default () => ({
     browser: process.env.SESSION_PHONE_NAME ?? 'Chrome',
   },
 
+  baileys: {
+    // Por quantos segundos o conteúdo das mensagens ENVIADAS fica no Redis para
+    // responder a pedidos de retry ("Aguardando mensagem") depois de um restart
+    // ou de a instância migrar de worker. 0 = não persiste (só memória do
+    // processo). Valor inválido/negativo cai no default de 24h.
+    retryCacheTtlSec: parseRetryCacheTtl(process.env.BAILEYS_RETRY_CACHE_TTL_SEC),
+  },
+
   whatsmeow: {
     // URL do sidecar Go (wamux_go, em services/whatsmeow/).
     url: process.env.WHATSMEOW_URL ?? 'http://localhost:8081',
@@ -81,12 +98,30 @@ export default () => ({
     // Base URL pública deste gateway, usada como destino do webhook que o
     // serviço Go chama de volta (…/api/webhooks/whatsmeow/:id).
     callbackBaseUrl: process.env.WHATSMEOW_CALLBACK_BASE ?? 'http://localhost:3000',
+    // Exige `X-Wamux-Signature` (HMAC do corpo com a master key) nos callbacks
+    // do sidecar. Só desligue durante um upgrade em que o sidecar antigo (que
+    // não assina) ainda esteja no ar.
+    requireSignature: (process.env.WHATSMEOW_WEBHOOK_REQUIRE_SIGNATURE ?? 'true') === 'true',
   },
 
   cloudApi: {
-    version: process.env.CLOUD_API_VERSION ?? 'v21.0',
+    version: process.env.CLOUD_API_VERSION ?? 'v26.0',
     baseUrl: process.env.CLOUD_API_BASE_URL ?? 'https://graph.facebook.com',
     verifyToken: process.env.CLOUD_API_VERIFY_TOKEN ?? '',
+    // App Secret do app da Meta — valida `X-Hub-Signature-256` dos webhooks.
+    // A instância pode sobrescrever com `config.appSecret`.
+    appSecret: process.env.CLOUD_API_APP_SECRET ?? '',
+  },
+
+  // WhatsApp Flows: correlação das execuções (tabela flow_sessions).
+  flows: {
+    // false = guarda só os metadados de correlação; o conteúdo da resposta
+    // segue apenas no webhook, sem ficar at-rest.
+    saveResponseData: (process.env.FLOWS_SAVE_RESPONSE_DATA ?? 'true') === 'true',
+    // 0 = nunca expurga.
+    sessionRetentionDays: parseInt(process.env.FLOWS_SESSION_RETENTION_DAYS ?? '0', 10),
+    // Timeout da chamada ao endpoint do integrador (a Meta espera no máx. 10s).
+    dataExchangeTimeoutMs: parseInt(process.env.FLOWS_DATA_EXCHANGE_TIMEOUT_MS ?? '8000', 10),
   },
 
   // Persistência do Inbox (contato-chat/mensagens). Opt-in por privacidade —

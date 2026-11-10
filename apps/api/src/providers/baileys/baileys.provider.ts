@@ -1,7 +1,16 @@
 import * as QRCode from 'qrcode';
 import pino, { Logger as PinoLogger } from 'pino';
 import { ProxyAgent } from 'proxy-agent';
-import type { AnyMessageContent, BinaryNode, WAMessage, WASocket } from 'baileys';
+import type {
+  AnyMessageContent,
+  BinaryNode,
+  CacheStore,
+  GroupMetadata,
+  WAMessage,
+  WAMessageKey,
+  WASocket,
+  proto,
+} from 'baileys';
 import { Readable } from 'node:stream';
 import { BaseProvider, ProviderContext, QrPayload } from '../provider.interface';
 import { classifyJid } from '../jid.util';
@@ -27,7 +36,6 @@ import {
   Label,
   LabelTarget,
   MessageAckStatus,
-  MessageType,
   NewsletterInfo,
   NormalizedEdit,
   NormalizedMessage,
@@ -56,6 +64,15 @@ import {
 } from '../provider.types';
 import { exportBaileysCreds, importBaileysCreds, usePostgresAuthState } from './baileys-auth-state';
 import { loadBaileys, resolveWaWebVersion, type BaileysModule } from './baileys-runtime';
+import { MapCacheStore, RetryCounterStore, SentMessageStore, TtlLruCache } from './baileys-caches';
+import { mapBaileysContent } from './baileys-normalize';
+
+/** Contador de retries por mensagem: mesmo TTL do default do Baileys (1h). */
+const MSG_RETRY_TTL_MS = 60 * 60 * 1000;
+/** Cache de leitura das chaves Signal: mesmo TTL do default do Baileys (5 min). */
+const SIGNAL_KEY_CACHE_TTL_MS = 5 * 60 * 1000;
+/** Metadados de grupo usados no envio (lista de participantes p/ o fan-out). */
+const GROUP_METADATA_TTL_MS = 5 * 60 * 1000;
 
 /** Esconde user:senha na URL do proxy para não vazar credenciais no log. */
 function maskProxy(url: string): string {
@@ -135,10 +152,66 @@ export class BaileysProvider extends BaseProvider {
   private readonly polls = new Map<string, WAMessage>(); // pollId → msg (p/ descriptografar votos)
   private labelsResynced = false; // guard: força o re-sync de labels 1x por processo
 
+  // ── plumbing de retry/sessão ──────────────────────────────
+  // Estes três vivem na INSTÂNCIA do provider (não no socket): o manager chama
+  // `initialize()` de novo a cada reconexão e o estado precisa atravessar isso.
+  // O store de retry e o contador têm ainda um 2º nível no `ProviderCache`
+  // (Redis), que atravessa restart do processo e migração de worker — ver
+  // baileys-caches.ts. Sem `cache` no contexto, ou com TTL 0, é só memória.
+
+  /** Segundos de retenção do conteúdo enviado no Redis (0 = não persiste). */
+  private readonly retryCacheTtlSec = this.cache
+    ? Math.max(0, Math.floor(Number(this.config.baileysRetryCacheTtlSec ?? 0)) || 0)
+    : 0;
+  /** Último aviso de falha do cache — evita inundar o log com o Redis fora. */
+  private lastCacheWarnAt = 0;
+
+  /** Conteúdo do que enviamos, para responder aos pedidos de retry (`getMessage`). */
+  private readonly sentMessages = new SentMessageStore({
+    cache: this.cache,
+    ttlSec: this.retryCacheTtlSec,
+    // `B` só existe após `initialize()` — e nada é enviado antes disso.
+    codec: () => this.B?.proto?.Message,
+    onError: (op, err) => this.onCacheError('sent', op, err),
+  });
+  /** Quantas vezes cada mensagem já foi re-tentada — evita loop de retry após reconectar. */
+  private readonly msgRetryCounterCache: CacheStore =
+    this.retryCacheTtlSec > 0
+      ? new RetryCounterStore({
+          ttlMs: MSG_RETRY_TTL_MS,
+          maxEntries: 10_000,
+          cache: this.cache,
+          // O contador não carrega conteúdo: vale o TTL dele (1h), limitado ao configurado.
+          ttlSec: Math.min(MSG_RETRY_TTL_MS / 1000, this.retryCacheTtlSec),
+          onError: (op, err) => this.onCacheError('retry', op, err),
+        })
+      : new MapCacheStore({ ttlMs: MSG_RETRY_TTL_MS, maxEntries: 10_000 });
+  /** Metadados de grupo p/ o envio; invalidado por evento de grupo (ver registerHandlers). */
+  private readonly groupMetadataCache = new TtlLruCache<GroupMetadata>({
+    ttlMs: GROUP_METADATA_TTL_MS,
+    maxEntries: 1_000,
+  });
+  /** Dedup de buscas concorrentes de metadados do mesmo grupo. */
+  private readonly groupMetadataInFlight = new Map<string, Promise<GroupMetadata | undefined>>();
+
   constructor(ctx: ProviderContext) {
     super(ctx);
     // Baileys exige um logger estilo pino; silenciamos o ruído interno dele.
     this.waLogger = pino({ level: 'silent' });
+  }
+
+  /** Falha do cache de retry (Redis): nunca derruba nada, só registra (1 aviso/min). */
+  private onCacheError(store: string, op: string, err: unknown): void {
+    const detail = `[${this.instanceId}] cache de retry (${store}.${op}) falhou: ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+    const now = Date.now();
+    if (now - this.lastCacheWarnAt >= 60_000) {
+      this.lastCacheWarnAt = now;
+      this.logger.warn(`${detail} — seguindo só com memória`);
+    } else {
+      this.logger.debug(detail);
+    }
   }
 
   private resetInit(): void {
@@ -170,10 +243,29 @@ export class BaileysProvider extends BaseProvider {
       : undefined;
     if (proxyUrl) this.logger.log(`[${this.instanceId}] usando proxy ${maskProxy(proxyUrl)}`);
 
+    // Cache de leitura na frente do store Postgres: sem ele cada mensagem
+    // recebida/enviada faz N SELECTs de session/pre-key/sender-key. As ESCRITAS
+    // (inclusive remoções e as chaves da v7: lid-mapping, device-list, tctoken,
+    // identity-key) continuam indo para o store — o wrapper só memoriza.
+    // Passamos o nosso cache (sem timer) em vez do NodeCache default: este é
+    // recriado a cada `initialize()` e o NodeCache deixaria um timer por
+    // reconexão. Recriar aqui também garante cache limpo após logout/import.
+    const keys = this.B.makeCacheableSignalKeyStore(
+      state.keys,
+      this.waLogger,
+      new MapCacheStore({ ttlMs: SIGNAL_KEY_CACHE_TTL_MS, maxEntries: 20_000 }),
+    );
+
     this.sock = this.B.default({
       version,
-      auth: state,
+      auth: { creds: state.creds, keys },
       logger: this.waLogger,
+      // Retry de descriptografia: o destinatário pede o reenvio e o Baileys
+      // precisa do conteúdo original (memória e, num miss, Redis). Miss ou erro
+      // → `undefined` (nunca mensagem vazia); `fetch` não rejeita.
+      getMessage: (key: WAMessageKey) => this.sentMessages.fetch(key.id),
+      msgRetryCounterCache: this.msgRetryCounterCache,
+      cachedGroupMetadata: (jid: string) => this.cachedGroupMetadata(jid),
       browser: [client, browser, '1.0'],
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: true,
@@ -256,18 +348,30 @@ export class BaileysProvider extends BaseProvider {
     this.sock.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
-        // Edição de mensagem: protocolMessage MESSAGE_EDIT.
+        // Edição de mensagem: protocolMessage MESSAGE_EDIT. Chega "pura" ou
+        // embrulhada (`editedMessage` e/ou `ephemeralMessage` em chats com
+        // mensagens temporárias) — por isso olhamos o conteúdo desembrulhado.
+        const unwrapped = this.unwrap(msg.message);
+        const protocol = unwrapped?.protocolMessage;
         const edited =
-          msg.message?.protocolMessage?.editedMessage ?? msg.message?.editedMessage?.message;
+          this.unwrap(protocol?.editedMessage) ??
+          // envelope `editedMessage` carregando o conteúdo novo direto (sem protocolMessage).
+          (msg.message?.editedMessage?.message ? unwrapped : undefined);
         if (edited) {
           this.emitWebhook(WebhookEvent.MESSAGE_EDITED, {
             provider: this.type,
             instanceId: this.instanceId,
-            messageId: msg.message?.protocolMessage?.key?.id ?? msg.key?.id ?? '',
+            messageId: protocol?.key?.id ?? msg.key?.id ?? '',
             chatId: msg.key?.remoteJid ?? '',
             from: msg.key?.participant ?? msg.key?.remoteJid ?? '',
             fromMe: msg.key?.fromMe ?? false,
-            text: edited.conversation ?? edited.extendedTextMessage?.text ?? '',
+            text:
+              edited.conversation ??
+              edited.extendedTextMessage?.text ??
+              edited.imageMessage?.caption ??
+              edited.videoMessage?.caption ??
+              edited.documentMessage?.caption ??
+              '',
             timestamp: Math.floor(Date.now() / 1000),
           } satisfies NormalizedEdit);
           continue;
@@ -344,10 +448,16 @@ export class BaileysProvider extends BaseProvider {
     this.sock.ev.on('contacts.upsert', (c) => this.emitWebhook(WebhookEvent.CONTACTS_UPSERT, c));
     this.sock.ev.on('contacts.update', (c) => this.emitWebhook(WebhookEvent.CONTACTS_UPDATE, c));
     this.sock.ev.on('groups.upsert', (g) => this.emitWebhook(WebhookEvent.GROUPS_UPSERT, g));
-    this.sock.ev.on('groups.update', (g) => this.emitWebhook(WebhookEvent.GROUPS_UPDATE, g));
-    this.sock.ev.on('group-participants.update', (g) =>
-      this.emitWebhook(WebhookEvent.GROUP_PARTICIPANTS_UPDATE, g),
-    );
+    // Os dois eventos de grupo também invalidam o cache de metadados usado no
+    // envio — participante novo precisa entrar no fan-out da próxima mensagem.
+    this.sock.ev.on('groups.update', (g) => {
+      for (const update of g) this.invalidateGroupMetadata(update.id);
+      this.emitWebhook(WebhookEvent.GROUPS_UPDATE, g);
+    });
+    this.sock.ev.on('group-participants.update', (g) => {
+      this.invalidateGroupMetadata(g.id);
+      this.emitWebhook(WebhookEvent.GROUP_PARTICIPANTS_UPDATE, g);
+    });
     this.sock.ev.on('presence.update', (p) => this.emitWebhook(WebhookEvent.PRESENCE_UPDATE, p));
     this.sock.ev.on('call', (c) => this.emitWebhook(WebhookEvent.CALL_RECEIVED, c));
     // Labels: alimenta o store local além de emitir o webhook.
@@ -519,6 +629,10 @@ export class BaileysProvider extends BaseProvider {
     this.sock?.end(undefined);
     this.sock = undefined;
     await this.sessionStore.clear(this.instanceId);
+    // Credenciais descartadas → o que estava em cache pertence a outra sessão.
+    this.sentMessages.clear();
+    this.msgRetryCounterCache.flushAll();
+    this.groupMetadataCache.clear();
     this.setStatus(ConnectionStatus.LOGGED_OUT);
   }
 
@@ -643,28 +757,32 @@ export class BaileysProvider extends BaseProvider {
     return [...this.labelStore.values()].filter((l) => l.active !== false);
   }
 
+  /**
+   * `addLabel` é a única primitiva do Baileys (app-state `label_edit`): cria,
+   * renomeia e apaga pela mesma ação. O id é escolhido pelo cliente — segue a
+   * sequência numérica que o próprio WhatsApp usa.
+   */
   async upsertLabel(input: UpsertLabelInput): Promise<Label> {
-    const sock = this.socket() as WASocket & {
-      addOrEditLabel?: (l: {
-        id?: string;
-        name: string;
-        color?: number;
-      }) => Promise<{ id: string }>;
-    };
-    if (!sock.addOrEditLabel) throw new Error('build do Baileys sem addOrEditLabel');
-    const res = await sock.addOrEditLabel({
-      id: input.id,
-      name: input.name,
-      color: input.color?.index,
-    });
-    const label: Label = {
-      id: input.id ?? res.id,
-      name: input.name,
-      color: input.color,
-      active: true,
-    };
+    const id = input.id ?? this.nextLabelId();
+    await this.socket().addLabel('', { id, name: input.name, color: input.color?.index });
+    const label: Label = { id, name: input.name, color: input.color, active: true };
     this.labelStore.set(label.id, label);
     return label;
+  }
+
+  async deleteLabel(labelId: string): Promise<void> {
+    const current = this.labelStore.get(labelId);
+    await this.socket().addLabel('', { id: labelId, name: current?.name, deleted: true });
+    this.labelStore.delete(labelId);
+    this.assoc.delete(labelId);
+  }
+
+  private nextLabelId(): string {
+    const max = [...this.labelStore.keys()]
+      .map((k) => Number(k))
+      .filter((n) => Number.isInteger(n))
+      .reduce((a, b) => Math.max(a, b), 0);
+    return String(max + 1);
   }
 
   async setLabelForTarget(labelId: string, target: LabelTarget, on: boolean): Promise<void> {
@@ -901,6 +1019,7 @@ export class BaileysProvider extends BaseProvider {
       participants.map((p) => this.toJid(p)),
       action,
     );
+    this.invalidateGroupMetadata(this.toGroupJid(jid));
     return res.map((r) => ({ jid: r.jid ?? '', status: String(r.status) }));
   }
 
@@ -931,6 +1050,7 @@ export class BaileysProvider extends BaseProvider {
 
   async leaveGroup(jid: string): Promise<void> {
     await this.socket().groupLeave(this.toGroupJid(jid));
+    this.invalidateGroupMetadata(this.toGroupJid(jid));
   }
 
   /** Aceita jid já formatado (…@g.us) ou o id cru do grupo. */
@@ -1442,6 +1562,8 @@ export class BaileysProvider extends BaseProvider {
       };
     }
     const sent = await this.socket().sendMessage(jid, { delete: key });
+    // Apagada para todos: um retry tardio não pode reenviar o conteúdo original.
+    this.sentMessages.forget(input.messageId);
     return this.result(sent, jid);
   }
 
@@ -1504,7 +1626,59 @@ export class BaileysProvider extends BaseProvider {
     return this.sock;
   }
 
+  /**
+   * `cachedGroupMetadata` do socket: o Baileys consulta antes de cada envio a
+   * grupo e, no miss, busca por conta própria SEM guardar. Aqui o miss busca,
+   * guarda (TTL ~5 min) e devolve; se a busca falhar devolvemos `undefined` e o
+   * Baileys segue o caminho normal dele (e reporta o erro real).
+   */
+  private cachedGroupMetadata(jid: string): Promise<GroupMetadata | undefined> {
+    const hit = this.groupMetadataCache.get(jid);
+    if (hit) return Promise.resolve(hit);
+    const pending = this.groupMetadataInFlight.get(jid);
+    if (pending) return pending;
+
+    const sock = this.sock;
+    if (!sock) return Promise.resolve(undefined);
+    const fetching: Promise<GroupMetadata | undefined> = sock
+      .groupMetadata(jid)
+      .then((meta) => {
+        // Só guarda se ninguém invalidou durante a busca (evento de grupo no meio).
+        if (this.groupMetadataInFlight.get(jid) === fetching) {
+          this.groupMetadataCache.set(jid, meta);
+        }
+        return meta;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.groupMetadataInFlight.get(jid) === fetching) {
+          this.groupMetadataInFlight.delete(jid);
+        }
+      });
+    this.groupMetadataInFlight.set(jid, fetching);
+    return fetching;
+  }
+
+  private invalidateGroupMetadata(jid: string | null | undefined): void {
+    if (!jid) return;
+    this.groupMetadataCache.delete(jid);
+    // Uma busca em andamento pode ter lido o estado antigo — não deixa ela gravar.
+    this.groupMetadataInFlight.delete(jid);
+  }
+
+  /**
+   * Tira os envelopes (ephemeral / viewOnce / documentWithCaption / editedMessage)
+   * com o `normalizeMessageContent` do Baileys. `B` só existe após `initialize()`;
+   * sem ele devolve o conteúdo como veio.
+   */
+  private unwrap(content: proto.IMessage | null | undefined): proto.IMessage | undefined {
+    if (!content) return undefined;
+    return this.B?.normalizeMessageContent?.(content) ?? content;
+  }
+
   private result(sent: WAMessage | undefined, jid: string): SendResult {
+    // Guarda o conteúdo para responder a um eventual pedido de retry (getMessage).
+    this.sentMessages.remember(sent?.key?.id, sent?.message);
     // Envio pela API = evento `message.sent` (o echo de messages.upsert vem como
     // 'append' e é ignorado; o handler de 'notify' só pega envios de outro
     // aparelho). Aqui garantimos o evento para toda mensagem que nós enviamos.
@@ -1549,41 +1723,10 @@ export class BaileysProvider extends BaseProvider {
     if (!msg.message || !msg.key?.remoteJid) return null;
     const chatId = msg.key.remoteJid;
     const isGroup = chatId.endsWith('@g.us');
-    const content = msg.message;
-
-    let type = MessageType.UNKNOWN;
-    let text: string | undefined;
-    let media: NormalizedMessage['media'];
-
-    if (content.conversation) {
-      type = MessageType.TEXT;
-      text = content.conversation;
-    } else if (content.extendedTextMessage?.text) {
-      type = MessageType.TEXT;
-      text = content.extendedTextMessage.text;
-    } else if (content.imageMessage) {
-      type = MessageType.IMAGE;
-      text = content.imageMessage.caption ?? undefined;
-      media = { mimetype: content.imageMessage.mimetype ?? undefined, caption: text };
-    } else if (content.videoMessage) {
-      type = MessageType.VIDEO;
-      text = content.videoMessage.caption ?? undefined;
-      media = { mimetype: content.videoMessage.mimetype ?? undefined, caption: text };
-    } else if (content.audioMessage) {
-      type = MessageType.AUDIO;
-      media = { mimetype: content.audioMessage.mimetype ?? undefined };
-    } else if (content.documentMessage) {
-      type = MessageType.DOCUMENT;
-      media = {
-        mimetype: content.documentMessage.mimetype ?? undefined,
-        filename: content.documentMessage.fileName ?? undefined,
-      };
-    } else if (content.stickerMessage) {
-      type = MessageType.STICKER;
-      media = { mimetype: content.stickerMessage.mimetype ?? undefined };
-    } else if (content.locationMessage) {
-      type = MessageType.LOCATION;
-    }
+    // Sem desembrulhar, mensagens temporárias / visualização única / documento
+    // com legenda saíam como UNKNOWN e sem texto. O `raw` continua o original.
+    const content = this.unwrap(msg.message) ?? msg.message;
+    const { type, text, media, location, ...extras } = mapBaileysContent(content);
 
     return {
       provider: this.type,
@@ -1599,13 +1742,8 @@ export class BaileysProvider extends BaseProvider {
       type,
       text,
       media,
-      location: content.locationMessage
-        ? {
-            latitude: content.locationMessage.degreesLatitude ?? 0,
-            longitude: content.locationMessage.degreesLongitude ?? 0,
-            name: content.locationMessage.name ?? undefined,
-          }
-        : undefined,
+      ...extras,
+      location,
       raw: msg,
     };
   }

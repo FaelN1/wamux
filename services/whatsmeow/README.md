@@ -21,6 +21,9 @@ da verdade do whatsmeow (com proxy, grupos, fila, etc.):
 3. **Recebimento:** o serviço Go entrega os eventos
    (`MESSAGE` / `CONNECTION_STATUS` / `MESSAGE_STATUS`) no webhook do gateway,
    que normaliza para o modelo canônico e repassa ao cliente final.
+   Cada entrega leva o header
+   `X-Wamux-Signature: sha256=<hex minúsculo do HMAC-SHA256(MASTER_API_KEY, corpo exato)>`,
+   que o gateway valida antes de aceitar o evento.
 
 > Não há dupla gestão: o gateway **não** reimplementa instância/fila/webhook do
 > whatsmeow — ele delega ao serviço Go e só federa/normaliza.
@@ -54,6 +57,10 @@ raiz). O `docker-compose.yml` da raiz injeta as variáveis dele no bloco
 - O `media_base64` que este serviço inclui no webhook (mídia baixada e
   codificada) é conveniente, mas pesa em volume. O adapter do gateway mantém o
   base64 apenas no campo `raw` do evento, não no payload canônico.
+- Enviar para um número que não existe no WhatsApp devolve **422** com
+  `error: "recipient_not_on_whatsapp"` (não mais um 500 genérico).
+- Respostas de WhatsApp Flow chegam no evento `MESSAGE` com `type: "interactive"`
+  e o campo `flow_response` (`name`, `params_json` como string JSON crua, `body`).
 - Este serviço mantém a conexão viva mesmo quando o gateway reinicia — o
   `destroy()` do adapter **não** derruba o serviço Go.
 

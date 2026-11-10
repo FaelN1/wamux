@@ -1508,7 +1508,7 @@ func (c *Client) UpdateProfile(req UpdateProfileRequest) error {
 	}
 
 	if req.Status != "" {
-		if err := c.WAClient.SetStatusMessage(ctx, req.Status); err != nil {
+		if err := c.WAClient.SetStatusMessage(ctx, types.SetStatusInput{Text: &req.Status}); err != nil {
 			return fmt.Errorf("failed to update status: %w", err)
 		}
 	}

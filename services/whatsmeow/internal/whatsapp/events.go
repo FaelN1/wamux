@@ -6,6 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -121,12 +122,24 @@ type MessageData struct {
 	Chat        string `json:"chat"`
 	IsGroup     bool   `json:"is_group"`
 	Timestamp   int64  `json:"timestamp"`
-	Type        string `json:"type"` // text, image, video, audio, document, sticker, poll, other
+	Type        string `json:"type"` // text, image, video, audio, document, sticker, poll, interactive, other
 	Text        string `json:"text,omitempty"`
 	HasMedia    bool   `json:"has_media"`
 	MimeType    string `json:"mime_type,omitempty"`
 	FileName    string `json:"file_name,omitempty"`
 	MediaBase64 string `json:"media_base64,omitempty"`
+	// FlowResponse is set only for type "interactive": the user's reply to a
+	// WhatsApp Flow (native flow response).
+	FlowResponse *FlowResponseData `json:"flow_response,omitempty"`
+}
+
+// FlowResponseData is the reply to a WhatsApp Flow. ParamsJSON is forwarded as
+// the raw JSON string sent by WhatsApp, unparsed, so consumers decide how to
+// decode it.
+type FlowResponseData struct {
+	Name       string `json:"name"`
+	ParamsJSON string `json:"params_json"`
+	Body       string `json:"body"`
 }
 
 type MessageStatusData struct {
@@ -268,9 +281,26 @@ func BuildMessageData(client *whatsmeow.Client, evt *events.Message, log zerolog
 	case msg.GetPollCreationMessage() != nil:
 		data.Type = "poll"
 		data.Text = msg.GetPollCreationMessage().GetName()
+	case msg.GetInteractiveResponseMessage().GetNativeFlowResponseMessage() != nil:
+		data.Type = "interactive"
+		data.FlowResponse = buildFlowResponse(msg.GetInteractiveResponseMessage())
 	}
 
 	return data
+}
+
+// buildFlowResponse extracts the native flow response from an interactive
+// response message. Returns nil when the message carries no flow response.
+func buildFlowResponse(ir *waE2E.InteractiveResponseMessage) *FlowResponseData {
+	nf := ir.GetNativeFlowResponseMessage()
+	if nf == nil {
+		return nil
+	}
+	return &FlowResponseData{
+		Name:       nf.GetName(),
+		ParamsJSON: nf.GetParamsJSON(),
+		Body:       ir.GetBody().GetText(),
+	}
 }
 
 // resolveJID converts a LID JID to a phone number JID if possible, using the whatsmeow store

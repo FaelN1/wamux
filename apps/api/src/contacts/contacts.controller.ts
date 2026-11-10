@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
+  ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -17,6 +18,7 @@ import { RequireScope } from '../common/require-scope.decorator';
 import { ContactsService } from './contacts.service';
 import { NumberCheckService } from './number-check.service';
 import { SetPresenceDto } from './dto/set-presence.dto';
+import { MarkReadDto } from './dto/mark-read.dto';
 import { CheckNumbersDto } from './dto/check-numbers.dto';
 import { FetchMessagesQueryDto } from './dto/fetch-messages.query.dto';
 import { InboxQueryService } from '../inbox/inbox-query.service';
@@ -209,14 +211,15 @@ export class ContactsController {
   @ApiParam(JID_PARAM)
   @ApiOkResponse({ schema: OK_SCHEMA })
   @ApiResponse(NOT_IMPL_501)
-  async read(@Param('id') id: string, @Param('jid') jid: string) {
+  @ApiBody({ type: MarkReadDto, required: false })
+  async read(@Param('id') id: string, @Param('jid') jid: string, @Body() dto?: MarkReadDto) {
     // Unread local primeiro — operação de DB pura, não depende de conexão
     // ao vivo. Se o markRead ao vivo (abaixo) falhar (ex.: desconectado), o
     // unread do Inbox já ficou zerado mesmo assim (comportamento existente
     // de propagar o erro do ao-vivo é preservado, só a ordem garante que a
     // parte persistida não fica refém da ao-vivo).
     await this.inboxQuery.markRead(id, jid);
-    await this.contacts.markRead(id, jid);
+    await this.contacts.markRead(id, jid, dto?.messageIds, { typing: dto?.typing });
     return { ok: true };
   }
 }

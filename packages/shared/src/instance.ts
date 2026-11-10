@@ -255,6 +255,28 @@ export const WEBHOOK_EVENTS: WebhookEventMeta[] = [
     category: 'Templates',
     evolution: 'TEMPLATE_CATEGORY_UPDATE',
   },
+  // ── Flows ──
+  {
+    value: WebhookEvent.FLOW_RESPONSE,
+    label: 'Flow: resposta',
+    description: 'Um WhatsApp Flow foi concluído: flowToken, dados preenchidos e sessão.',
+    category: 'Flows',
+  },
+  {
+    value: WebhookEvent.FLOW_STATUS_UPDATE,
+    label: 'Flow: status/saúde',
+    description:
+      'Mudança de status de um Flow ou alerta de erro/latência/disponibilidade do endpoint (Cloud API).',
+    category: 'Flows',
+  },
+  // ── Conta (Cloud API) ──
+  {
+    value: WebhookEvent.ACCOUNT_UPDATE,
+    label: 'Conta/número (Cloud)',
+    description:
+      'Eventos de conta da Meta: qualidade e nome do número, alertas, revisão, segurança, opt-out de marketing. O payload traz `field` (nome do campo da Meta) e `value`.',
+    category: 'Conta',
+  },
   // ── Sistema ──
   {
     value: WebhookEvent.ANTIBAN_ALERT,

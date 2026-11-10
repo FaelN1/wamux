@@ -11,6 +11,7 @@ import {
   Settings,
   TerminalSquare,
   Users,
+  Workflow,
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { clearApiKey } from '@/api';
@@ -42,7 +43,7 @@ interface NavItem {
 /**
  * Navegação agrupada por área: Visão geral (métricas), Operação (o que você
  * opera no dia a dia: números e conversas), Ferramentas (montar
- * templates / testar a API) e Sistema (auditoria + configuração).
+ * templates e Flows / testar a API) e Sistema (auditoria + configuração).
  */
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
@@ -71,6 +72,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Ferramentas',
     items: [
       { path: '/templates', label: 'Templates', icon: FileText },
+      { path: '/flows', label: 'Flows', icon: Workflow },
       { path: '/playground', label: 'Playground', icon: TerminalSquare },
     ],
   },

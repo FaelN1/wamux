@@ -96,7 +96,7 @@ func main() {
 	deliveryRepo := webhook.NewDeliveryRepository(db)
 
 	// Initialize webhook dispatcher
-	dispatcher := webhook.NewDispatcher(deliveryRepo, appLogger)
+	dispatcher := webhook.NewDispatcher(deliveryRepo, appLogger, cfg.MasterAPIKey)
 
 	// Initialize WebSocket hub
 	wsHub := ws.NewHub(appLogger)

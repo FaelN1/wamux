@@ -17,10 +17,7 @@ export class CloudGroupsService {
   async get(id: string, groupId: string): Promise<GroupInfo> {
     return (await this.cap(id)).getCloudGroup!(groupId);
   }
-  async create(
-    id: string,
-    input: { subject: string; participants?: string[] },
-  ): Promise<GroupInfo> {
+  async create(id: string, input: { subject: string; description?: string }): Promise<GroupInfo> {
     return (await this.cap(id)).createCloudGroup!(input);
   }
   async remove(id: string, groupId: string): Promise<void> {

@@ -24,6 +24,7 @@ import { CommunitiesModule } from './communities/communities.module';
 import { TemplatesModule } from './templates/templates.module';
 import { AccountModule } from './account/account.module';
 import { FlowsModule } from './flows/flows.module';
+import { FlowSessionsModule } from './flow-sessions/flow-sessions.module';
 import { CloudGroupsModule } from './cloud-groups/cloud-groups.module';
 import { CallingModule } from './calling/calling.module';
 import { HistoryModule } from './history/history.module';
@@ -80,6 +81,7 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
     SessionModule,
     WebhookModule,
     PollModule,
+    FlowSessionsModule,
     InstanceModule,
     EventsModule,
     MessagingModule,

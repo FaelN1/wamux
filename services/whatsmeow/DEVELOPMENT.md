@@ -2,7 +2,7 @@
 
 ## Pre-requisitos
 
-- Go 1.22+
+- Go 1.26+
 - Docker e Docker Compose
 - GCC (necessario para CGO/SQLite)
 

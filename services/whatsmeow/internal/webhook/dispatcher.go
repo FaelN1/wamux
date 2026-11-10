@@ -3,6 +3,9 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,20 +16,33 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// SignatureHeader carries the HMAC-SHA256 of the exact request body, keyed by
+// the master API key, so the receiver can authenticate the sender.
+const SignatureHeader = "X-Wamux-Signature"
+
 type Dispatcher struct {
 	repo       DeliveryRepository
 	httpClient *http.Client
 	logger     zerolog.Logger
+	signingKey []byte
 }
 
-func NewDispatcher(repo DeliveryRepository, logger zerolog.Logger) *Dispatcher {
+func NewDispatcher(repo DeliveryRepository, logger zerolog.Logger, signingKey string) *Dispatcher {
 	return &Dispatcher{
 		repo: repo,
 		httpClient: &http.Client{
 			Timeout: RequestTimeout,
 		},
-		logger: logger,
+		logger:     logger,
+		signingKey: []byte(signingKey),
 	}
+}
+
+// signPayload returns "sha256=<lowercase hex HMAC-SHA256(key, payload)>".
+func signPayload(key, payload []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(payload)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, instanceID, webhookURL, event string, data interface{}) error {
@@ -165,6 +181,9 @@ func (d *Dispatcher) sendHTTP(url string, payload []byte) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if len(d.signingKey) > 0 {
+		req.Header.Set(SignatureHeader, signPayload(d.signingKey, payload))
+	}
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {

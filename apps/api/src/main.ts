@@ -36,7 +36,18 @@ async function bootstrap() {
   // overhead do base64 (~33%).
   const mediaMaxMb = config.get<number>('media.maxSizeMb') ?? 100;
   const bodyLimit = `${Math.ceil(mediaMaxMb * 1.4)}mb`;
-  app.use(json({ limit: bodyLimit }));
+  // Webhooks de ENTRADA (Meta / sidecar) são autenticados por HMAC do corpo
+  // CRU — guardamos os bytes só nessas rotas (não duplicar base64 de mídia).
+  app.use(
+    json({
+      limit: bodyLimit,
+      verify: (req, _res, buf) => {
+        if (req.url?.startsWith('/api/webhooks/')) {
+          (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
 
   // Painel de Logs/Atividade — middleware Express puro (não interceptor Nest:

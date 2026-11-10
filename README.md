@@ -55,13 +55,13 @@ Bibliotecas diferentes, formatos de evento diferentes, sessões para gerenciar. 
 
 ### Para quem está construindo
 
-| Seu produto | Como o WAMux ajuda |
-| --- | --- |
-| **SaaS e CRMs** | Organize conexões por instância e ofereça integrações com acesso restrito. |
-| **Atendimento** | Receba mensagens, responda e acompanhe entrega e leitura por eventos. |
-| **Bots e automações** | Conecte seu backend, n8n ou consumidores de filas a uma interface comum. |
-| **Notificações transacionais** | Use idempotência, fila de saída, retry e rastreamento de status. |
-| **Operações com múltiplos providers** | Reúna contas Cloud, Baileys e whatsmeow no mesmo gateway. |
+| Seu produto                           | Como o WAMux ajuda                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------- |
+| **SaaS e CRMs**                       | Organize conexões por instância e ofereça integrações com acesso restrito. |
+| **Atendimento**                       | Receba mensagens, responda e acompanhe entrega e leitura por eventos.      |
+| **Bots e automações**                 | Conecte seu backend, n8n ou consumidores de filas a uma interface comum.   |
+| **Notificações transacionais**        | Use idempotência, fila de saída, retry e rastreamento de status.           |
+| **Operações com múltiplos providers** | Reúna contas Cloud, Baileys e whatsmeow no mesmo gateway.                  |
 
 <a id="comece"></a>
 
@@ -77,13 +77,13 @@ docker compose up --build
 
 **Abra o [painel em localhost:8080](http://localhost:8080)**, informe a `GLOBAL_API_KEY` configurada no `.env` e crie sua primeira instância.
 
-| Acesso | Endereço local |
-| --- | --- |
-| **Painel** | [localhost:8080](http://localhost:8080) |
-| **API REST** | [localhost:3000/api/v1](http://localhost:3000/api/v1) |
-| **Swagger** | [localhost:3000/api/docs](http://localhost:3000/api/docs) |
-| **Health check** | [localhost:3000/api/health](http://localhost:3000/api/health) |
-| **RabbitMQ — gestão** | [localhost:15672](http://localhost:15672) |
+| Acesso                | Endereço local                                                |
+| --------------------- | ------------------------------------------------------------- |
+| **Painel**            | [localhost:8080](http://localhost:8080)                       |
+| **API REST**          | [localhost:3000/api/v1](http://localhost:3000/api/v1)         |
+| **Swagger**           | [localhost:3000/api/docs](http://localhost:3000/api/docs)     |
+| **Health check**      | [localhost:3000/api/health](http://localhost:3000/api/health) |
+| **RabbitMQ — gestão** | [localhost:15672](http://localhost:15672)                     |
 
 O Compose inclui gateway Node.js, painel React, PostgreSQL, Redis, RabbitMQ e o sidecar Go do whatsmeow. O gateway também pode operar sem o painel, sem ativação manual e sem telemetria obrigatória.
 
@@ -173,18 +173,18 @@ O fluxo de conexão da Cloud API usa a configuração da Meta e não passa por Q
 
 Escolha o provider por instância. Consulte `GET /instances/:id/capabilities` para adaptar sua integração aos recursos disponíveis naquela conexão.
 
-| | Baileys | Cloud API | whatsmeow |
-| --- | --- | --- | --- |
-| **Provider** | `baileys` | `cloud` | `whatsmeow` |
-| **Conexão** | WebSocket em Node.js | HTTP — Meta Graph API | Sidecar em Go |
-| **API oficial da Meta** | Não | **Sim** | Não |
-| **Pareamento por QR** | Sim | Não se aplica | Sim |
-| **Texto e mídia** | Sim | Sim | Sim |
-| **Localização e contato** | Sim | Sim | Sim |
-| **Status / Stories** | Sim | Não | Sim |
-| **Grupos** | Sim | Sujeito à elegibilidade da Groups API | Sim |
-| **Comunidades e canais** | Sim¹ | Não | Sim¹ |
-| **Templates, Flows e gestão WABA** | Não | **Sim** | Não |
+|                                    | Baileys              | Cloud API                             | whatsmeow     |
+| ---------------------------------- | -------------------- | ------------------------------------- | ------------- |
+| **Provider**                       | `baileys`            | `cloud`                               | `whatsmeow`   |
+| **Conexão**                        | WebSocket em Node.js | HTTP — Meta Graph API                 | Sidecar em Go |
+| **API oficial da Meta**            | Não                  | **Sim**                               | Não           |
+| **Pareamento por QR**              | Sim                  | Não se aplica                         | Sim           |
+| **Texto e mídia**                  | Sim                  | Sim                                   | Sim           |
+| **Localização e contato**          | Sim                  | Sim                                   | Sim           |
+| **Status / Stories**               | Sim                  | Não                                   | Sim           |
+| **Grupos**                         | Sim                  | Sujeito à elegibilidade da Groups API | Sim           |
+| **Comunidades e canais**           | Sim¹                 | Não                                   | Sim¹          |
+| **Templates, Flows e gestão WABA** | Não                  | **Sim**                               | Não           |
 
 ¹ Nas comunidades, a operação de exclusão faz a conta sair; não apaga a comunidade para todos.
 
@@ -242,11 +242,12 @@ Do primeiro envio à operação diária: mensagens, conexões, eventos e visibil
 <details>
 <summary><b>WhatsApp Cloud API</b> — templates, Flows e gestão da conta Meta</summary>
 
-- **Templates HSM:** criação, consulta, atualização, exclusão e envio com parâmetros posicionais ou nomeados; analytics e webhooks de status, qualidade e categoria.
-- **Flows:** gestão, retorno de `validation_errors`, publicação, depreciação, envio e métricas.
-- **Conta e WABA:** perfil de negócio, números, registro, verificação, 2FA, informações da WABA, subscrição de webhooks e analytics de mensagens e conversas.
+- **Templates HSM:** criação, consulta, atualização, exclusão e envio com parâmetros posicionais ou nomeados; analytics e webhooks de status, qualidade e categoria. Templates de marketing podem sair pela **Marketing Messages API** (`route: "marketing"`) — veja [`docs/marketing-messages.md`](docs/marketing-messages.md).
+- **Flows:** gestão com retorno de `validation_errors`, publicação, depreciação e envio com token de correlação; **endpoint de troca de dados criptografado** (o gateway cuida de RSA/AES e repassa JSON puro ao seu serviço), sessões persistidas, evento `flow.response` e página própria no painel. Guia: [`docs/whatsapp-flows.md`](docs/whatsapp-flows.md).
+- **Conta e WABA:** perfil de negócio, números, registro, verificação, 2FA, informações da WABA, subscrição e override de webhook por número, e analytics de mensagens e de preço por mensagem (`pricing_analytics`).
 - **Interativos nativos:** botões, listas e CTA; marcar como lido e indicador de digitação; bloqueio e desbloqueio; download de mídia.
-- **Webhooks:** roteamento por `change.field` para mensagens, status, respostas de interativos, templates, grupos e chamadas.
+- **Webhooks:** roteamento por `change.field` para mensagens, status, respostas de interativos, templates, grupos, chamadas, Flows e eventos de conta.
+- **Graph API v26.0:** suporte a BSUID (usuários sem número exposto, envio por `recipient`), status `played`, preço por mensagem nos status e erros da Meta repassados com código, em vez de um 500 genérico.
 - **Groups API e Calling:** endpoints sujeitos às condições e às pendências de validação descritas na seção de engines.
 
 </details>
@@ -254,11 +255,11 @@ Do primeiro envio à operação diária: mensagens, conexões, eventos e visibil
 <details>
 <summary><b>Eventos e integrações</b> — escolha como seu sistema recebe atualizações</summary>
 
-| Transporte | Uso |
-| --- | --- |
+| Transporte       | Uso                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------ |
 | **Webhook HTTP** | Receber eventos no seu backend, com assinatura HMAC-SHA256 e proteção contra replay. |
-| **WebSocket** | Atualizar aplicações em tempo real. |
-| **RabbitMQ** | Publicar eventos no broker para consumidores de filas. |
+| **WebSocket**    | Atualizar aplicações em tempo real.                                                  |
+| **RabbitMQ**     | Publicar eventos no broker para consumidores de filas.                               |
 
 Configure os transportes e filtre os eventos por instância. Edições, reações e exclusões de mensagens também têm eventos normalizados.
 
@@ -279,14 +280,14 @@ Configure os transportes e filtre os eventos por instância. Edições, reaçõe
 <details>
 <summary><b>Painel, Inbox e Playground</b> — teste e acompanhe pelo navegador</summary>
 
-| Área | O que você faz |
-| --- | --- |
-| **Instâncias** | Crie conexões, leia QR Codes e acompanhe o status ao vivo. |
-| **Configuração** | Ajuste eventos, controles de ritmo e API keys com escopo. |
-| **Inbox** | Consulte conversas, contatos e mensagens persistidos em PostgreSQL, com atualizações por WebSocket. |
-| **Mídia na conversa** | Visualize imagem, vídeo e documento; reproduza áudio; envie anexos com preview e progresso. |
-| **Logs / Atividade** | Pesquise eventos entre instâncias, use filtros e histogramas e exporte os resultados. |
-| **Playground** | Execute endpoints com a instância selecionada, visualize QR Codes e gere cURL. |
+| Área                  | O que você faz                                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| **Instâncias**        | Crie conexões, leia QR Codes e acompanhe o status ao vivo.                                          |
+| **Configuração**      | Ajuste eventos, controles de ritmo e API keys com escopo.                                           |
+| **Inbox**             | Consulte conversas, contatos e mensagens persistidos em PostgreSQL, com atualizações por WebSocket. |
+| **Mídia na conversa** | Visualize imagem, vídeo e documento; reproduza áudio; envie anexos com preview e progresso.         |
+| **Logs / Atividade**  | Pesquise eventos entre instâncias, use filtros e histogramas e exporte os resultados.               |
+| **Playground**        | Execute endpoints com a instância selecionada, visualize QR Codes e gere cURL.                      |
 
 A persistência do Inbox é **opt-in por variáveis de ambiente**. Quando habilitada, o histórico persistido sobrevive a reinícios e pode ser consultado sem depender de uma sessão ao vivo.
 
@@ -294,20 +295,21 @@ A persistência do Inbox é **opt-in por variáveis de ambiente**. Quando habili
 
 ## Mais controle sobre cada envio
 
-| Quando isso acontece… | O gateway oferece… |
-| --- | --- |
-| Uma requisição de envio é repetida | **Idempotência** por `clientMessageId`. |
-| O envio precisa de ritmo e novas tentativas | **Fila de saída**, pacing por instância, retry e DLQ reprocessável. |
-| Um evento de entrada chega novamente | **Deduplicação** de entrada. |
-| O endpoint de webhook apresenta falhas | **Circuit breaker** por webhook. |
-| Um terceiro precisa enviar mensagens | **API key com escopo**, sem compartilhar a chave mestra. |
-| A operação precisa reduzir o ritmo | **Perfis de risco**, warmup, auto-throttle e limites de consulta de números. |
+| Quando isso acontece…                       | O gateway oferece…                                                           |
+| ------------------------------------------- | ---------------------------------------------------------------------------- |
+| Uma requisição de envio é repetida          | **Idempotência** por `clientMessageId`.                                      |
+| O envio precisa de ritmo e novas tentativas | **Fila de saída**, pacing por instância, retry e DLQ reprocessável.          |
+| Um evento de entrada chega novamente        | **Deduplicação** de entrada.                                                 |
+| O endpoint de webhook apresenta falhas      | **Circuit breaker** por webhook.                                             |
+| Um terceiro precisa enviar mensagens        | **API key com escopo**, sem compartilhar a chave mestra.                     |
+| A operação precisa reduzir o ritmo          | **Perfis de risco**, warmup, auto-throttle e limites de consulta de números. |
 
 <details>
 <summary><b>Ver controles de acesso e segurança</b></summary>
 
 - Autenticação por instância e whitelist/blacklist de JIDs na entrada e/ou saída.
 - Webhooks assinados com HMAC-SHA256, proteção contra replay e segredo rotacionável.
+- Webhooks de **entrada** autenticados: `X-Hub-Signature-256` da Meta (com `CLOUD_API_APP_SECRET`) e callbacks do sidecar whatsmeow assinados por HMAC — payload forjado é rejeitado com 401.
 - Chaves com escopos `read`, `send`, `control`, `setting`, `app` e `delete`.
 - Uma chave só pode delegar permissões que ela mesma possui.
 - Perfis conservador, normal e agressivo; warmup de contas novas e auto-throttle por sinais de risco.
@@ -327,52 +329,52 @@ O **[Swagger local](http://localhost:3000/api/docs)** reúne schemas e exemplos.
 
 Envie a chave no header `apikey`:
 
-| Chave | Acesso |
-| --- | --- |
-| `GLOBAL_API_KEY` | Administração do gateway. |
-| API key mestra da instância | Acesso total à respectiva instância. |
-| API key com escopo | Apenas as operações concedidas à integração. |
+| Chave                       | Acesso                                       |
+| --------------------------- | -------------------------------------------- |
+| `GLOBAL_API_KEY`            | Administração do gateway.                    |
+| API key mestra da instância | Acesso total à respectiva instância.         |
+| API key com escopo          | Apenas as operações concedidas à integração. |
 
 ### Rotas essenciais
 
 Os caminhos abaixo são relativos a `/api/v1`.
 
-| Você quer… | Endpoint |
-| --- | --- |
-| Criar uma conexão | `POST /instances` |
-| Conectar a conta | `POST /instances/:id/connect` |
-| Ler o QR Code | `GET /instances/:id/qr` |
-| Descobrir os recursos da engine | `GET /instances/:id/capabilities` |
-| Enviar texto | `POST /messages/:id/text` |
-| Consultar a entrega | `GET /messages/:id/status/:messageId` |
-| Configurar eventos | `PUT /instances/:id/events` |
-| Criar uma chave com escopo | `POST /instances/:id/api-keys` |
+| Você quer…                      | Endpoint                              |
+| ------------------------------- | ------------------------------------- |
+| Criar uma conexão               | `POST /instances`                     |
+| Conectar a conta                | `POST /instances/:id/connect`         |
+| Ler o QR Code                   | `GET /instances/:id/qr`               |
+| Descobrir os recursos da engine | `GET /instances/:id/capabilities`     |
+| Enviar texto                    | `POST /messages/:id/text`             |
+| Consultar a entrega             | `GET /messages/:id/status/:messageId` |
+| Configurar eventos              | `PUT /instances/:id/events`           |
+| Criar uma chave com escopo      | `POST /instances/:id/api-keys`        |
 
 <details>
 <summary><b>Explorar as demais áreas da API</b></summary>
 
 Use o Swagger como referência completa de métodos, parâmetros e bodies. Nas famílias abaixo, os sufixos pertencem ao prefixo indicado.
 
-| Área | Prefixo / caminhos de referência |
-| --- | --- |
-| **Instâncias** | `/instances/:id` · `/connect` · `/qr` · `/pair-code` · `/provider` · `/capabilities` |
-| **Mensagens** | `/messages/:id` · `/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `/location` · `/contact` · `/status` |
-| **Ações** | `/messages/:id` · `/reaction` · `/edit` · `/delete` · `/location-request` |
-| **Grupos** | `/instances/:id/groups` · `/:jid/participants` · `/:jid/subject` · `/:jid/invite` |
-| **Comunidades** | `/instances/:id/communities` · `/:jid/admins` · `/:jid/groups` · `/:jid/announcement` |
-| **Canais** | `/instances/:id/newsletters` · `/:jid/follow` · `/:jid/message` |
-| **Perfil** | `/instances/:id/profile` · `/instances/:id/account/profile` |
-| **Cloud** | `/instances/:id` · `/templates` · `/flows` · `/account/*` · `/cloud-groups` · `/calling/*` |
-| **Eventos** | `/instances/:id/events` · `/instances/:id/webhook` |
-| **Segurança** | `/instances/:id/filters` · `/instances/:id/webhook/dlq` · `/instances/:id/api-keys` |
-| **Controles de risco** | `/instances/:id/anti-ban` · `/instances/:id/anti-ban/status` |
-| **Contatos** | `/instances/:id/contacts/:jid/block` · `/instances/:id/presence` · `/instances/:id/numbers/check` |
-| **Etiquetas** | `/instances/:id/labels` · `/:labelId/associations` |
-| **Identidade e configuração** | `/instances/:id/identity/resolve` · `/instances/:id/settings` |
-| **Inbox** | `/instances/:id/chats` · `/instances/:id/chats/:jid/messages` · `/instances/:id/chats/:jid/messages/db` · `/instances/:id/contacts` |
-| **Atividade** | `/activity-logs` · `/facets` · `/histogram` · `/export` — escopo admin |
-| **Histórico** | `/instances/:id/history/import` · `/instances/:id/history/import/:jobId` |
-| **Download de mídia** | `/messages/:id/media/:messageId` |
+| Área                          | Prefixo / caminhos de referência                                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Instâncias**                | `/instances/:id` · `/connect` · `/qr` · `/pair-code` · `/provider` · `/capabilities`                                                |
+| **Mensagens**                 | `/messages/:id` · `/text` · `/media` · `/poll` · `/buttons` · `/list` · `/pix` · `/location` · `/contact` · `/status`               |
+| **Ações**                     | `/messages/:id` · `/reaction` · `/edit` · `/delete` · `/location-request`                                                           |
+| **Grupos**                    | `/instances/:id/groups` · `/:jid/participants` · `/:jid/subject` · `/:jid/invite`                                                   |
+| **Comunidades**               | `/instances/:id/communities` · `/:jid/admins` · `/:jid/groups` · `/:jid/announcement`                                               |
+| **Canais**                    | `/instances/:id/newsletters` · `/:jid/follow` · `/:jid/message`                                                                     |
+| **Perfil**                    | `/instances/:id/profile` · `/instances/:id/account/profile`                                                                         |
+| **Cloud**                     | `/instances/:id` · `/templates` · `/flows` · `/account/*` · `/cloud-groups` · `/calling/*`                                          |
+| **Eventos**                   | `/instances/:id/events` · `/instances/:id/webhook`                                                                                  |
+| **Segurança**                 | `/instances/:id/filters` · `/instances/:id/webhook/dlq` · `/instances/:id/api-keys`                                                 |
+| **Controles de risco**        | `/instances/:id/anti-ban` · `/instances/:id/anti-ban/status`                                                                        |
+| **Contatos**                  | `/instances/:id/contacts/:jid/block` · `/instances/:id/presence` · `/instances/:id/numbers/check`                                   |
+| **Etiquetas**                 | `/instances/:id/labels` · `/:labelId/associations`                                                                                  |
+| **Identidade e configuração** | `/instances/:id/identity/resolve` · `/instances/:id/settings`                                                                       |
+| **Inbox**                     | `/instances/:id/chats` · `/instances/:id/chats/:jid/messages` · `/instances/:id/chats/:jid/messages/db` · `/instances/:id/contacts` |
+| **Atividade**                 | `/activity-logs` · `/facets` · `/histogram` · `/export` — escopo admin                                                              |
+| **Histórico**                 | `/instances/:id/history/import` · `/instances/:id/history/import/:jobId`                                                            |
+| **Download de mídia**         | `/messages/:id/media/:messageId`                                                                                                    |
 
 Recursos não suportados pela engine retornam `501`. Alguns envios interativos podem retornar `422` quando não podem ser atendidos.
 
@@ -388,33 +390,33 @@ O projeto usa adapters para manter as particularidades de cada engine fora do mo
 
 ### Stack
 
-| Camada | Tecnologias |
-| --- | --- |
-| **Gateway** | Node.js ≥ 20 · NestJS 10 · TypeScript strict |
-| **Painel** | React · Vite · shadcn/ui |
-| **Dados e filas** | PostgreSQL · Redis · BullMQ · RabbitMQ |
-| **Engine Go** | whatsmeow em sidecar |
+| Camada             | Tecnologias                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| **Gateway**        | Node.js ≥ 20 · NestJS 10 · TypeScript strict                   |
+| **Painel**         | React · Vite · shadcn/ui                                       |
+| **Dados e filas**  | PostgreSQL · Redis · BullMQ · RabbitMQ                         |
+| **Engine Go**      | whatsmeow em sidecar                                           |
 | **Infraestrutura** | Docker Compose · ffmpeg para conversão de áudio em nota de voz |
-| **Monorepo** | pnpm · Turborepo |
+| **Monorepo**       | pnpm · Turborepo                                               |
 
 <details>
 <summary><b>Estrutura do repositório e comandos</b></summary>
 
-| Diretório | Responsabilidade |
-| --- | --- |
-| `apps/api/` | Gateway NestJS — `@wamux/api` |
-| `apps/web/` | Painel React — `@wamux/web` |
-| `packages/shared/` | Tipos e enums canônicos — `@wamux/shared` |
-| `packages/config/` | Presets de TypeScript, ESLint e Prettier — `@wamux/config` |
-| `services/whatsmeow/` | Sidecar Go, construído pelo Docker fora do pipeline Turbo |
+| Diretório             | Responsabilidade                                           |
+| --------------------- | ---------------------------------------------------------- |
+| `apps/api/`           | Gateway NestJS — `@wamux/api`                              |
+| `apps/web/`           | Painel React — `@wamux/web`                                |
+| `packages/shared/`    | Tipos e enums canônicos — `@wamux/shared`                  |
+| `packages/config/`    | Presets de TypeScript, ESLint e Prettier — `@wamux/config` |
+| `services/whatsmeow/` | Sidecar Go, construído pelo Docker fora do pipeline Turbo  |
 
-| Comando | Função |
-| --- | --- |
-| `pnpm dev` | Desenvolvimento em watch. |
-| `pnpm build` | Build com Turborepo. |
-| `pnpm lint` | Verificação de lint. |
-| `pnpm type-check` | Verificação de tipos. |
-| `pnpm test` | Testes com o runner nativo do Node.js. |
+| Comando           | Função                                 |
+| ----------------- | -------------------------------------- |
+| `pnpm dev`        | Desenvolvimento em watch.              |
+| `pnpm build`      | Build com Turborepo.                   |
+| `pnpm lint`       | Verificação de lint.                   |
+| `pnpm type-check` | Verificação de tipos.                  |
+| `pnpm test`       | Testes com o runner nativo do Node.js. |
 
 A suíte de testes usa um servidor WhatsApp simulado em processo e roda sem conta, telefone ou acesso à rede.
 

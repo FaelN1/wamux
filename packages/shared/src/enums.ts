@@ -39,6 +39,10 @@ export enum MessageType {
   LIST = 'list',
   /** interativa/nativeFlow (ex.: botão PIX). */
   INTERACTIVE = 'interactive',
+  /** pedido feito a partir de um catálogo. */
+  ORDER = 'order',
+  /** aviso do sistema (ex.: o contato trocou de número). */
+  SYSTEM = 'system',
   UNKNOWN = 'unknown',
 }
 
@@ -104,6 +108,14 @@ export enum WebhookEvent {
   TEMPLATE_STATUS_UPDATE = 'template.status_update',
   TEMPLATE_QUALITY_UPDATE = 'template.quality_update',
   TEMPLATE_CATEGORY_UPDATE = 'template.category_update',
+  // flows
+  /** resposta de um WhatsApp Flow concluído (nfm_reply), com flowToken e dados. */
+  FLOW_RESPONSE = 'flow.response',
+  /** mudança de status / alertas de saúde de um Flow (webhook `flows` da Meta). */
+  FLOW_STATUS_UPDATE = 'flow.status_update',
+  // conta (Cloud API)
+  /** eventos de conta/número da Meta (qualidade, nome, alertas, opt-out de marketing…). */
+  ACCOUNT_UPDATE = 'account.update',
   // sistema
   /** freio anti-ban (auto-throttle) acionado. */
   ANTIBAN_ALERT = 'antiban.alert',

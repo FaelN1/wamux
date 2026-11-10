@@ -59,13 +59,17 @@ export class SendFlowDto {
   mode?: 'published' | 'draft';
 
   /** ÚNICO por usuário/sessão (correlação com o nfm_reply). */
-  @ApiProperty({
-    description: 'Token ÚNICO por usuário/sessão — correlação com o nfm_reply.',
+  @ApiPropertyOptional({
+    description:
+      'Token ÚNICO por usuário/sessão — correlação com o nfm_reply. Omitido = o gateway gera ' +
+      'um UUID e o devolve na resposta.',
     example: 'flow-token-abc123',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  flowToken!: string;
+  @MaxLength(255)
+  flowToken?: string;
 
   @ApiPropertyOptional({
     enum: ['navigate', 'data_exchange'],

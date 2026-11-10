@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  baileys@7.0.0-rc14: 8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25
+  baileys@7.0.0-rc14: d4a27fa3ca98596f901388d44f88199430ac23030c549d5a5dd806da27cd1f8b
 
 importers:
 
@@ -88,7 +88,7 @@ importers:
         version: 1.18.1
       baileys:
         specifier: 7.0.0-rc14
-        version: 7.0.0-rc14(patch_hash=8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25)(sharp@0.34.5)
+        version: 7.0.0-rc14(patch_hash=d4a27fa3ca98596f901388d44f88199430ac23030c549d5a5dd806da27cd1f8b)(sharp@0.34.5)
       bullmq:
         specifier: ^5.19.0
         version: 5.79.2
@@ -8314,7 +8314,7 @@ snapshots:
 
   b4a@1.8.1: {}
 
-  baileys@7.0.0-rc14(patch_hash=8ed8cd9dad6e3a4b4617010ed72896abce09267c7eeaa2f41994d63861fa1c25)(sharp@0.34.5):
+  baileys@7.0.0-rc14(patch_hash=d4a27fa3ca98596f901388d44f88199430ac23030c549d5a5dd806da27cd1f8b)(sharp@0.34.5):
     dependencies:
       '@cacheable/node-cache': 1.7.6
       '@hapi/boom': 9.1.4

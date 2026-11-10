@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  GoneException,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiCreatedResponse,
   ApiOkResponse,
@@ -17,7 +29,12 @@ import { FlowsService } from './flows.service';
 import { CreateFlowDto } from './dto/create-flow.dto';
 import { UpdateFlowJsonDto } from './dto/update-flow-json.dto';
 import { SendFlowDto } from './dto/send-flow.dto';
-import { FlowMetricsQueryDto } from './dto/flow-metrics.query.dto';
+import {
+  ListFlowSessionsQueryDto,
+  SetFlowEncryptionDto,
+  SetFlowEndpointDto,
+  UpdateFlowMetadataDto,
+} from './dto/flow-config.dto';
 
 // ── Schemas reutilizáveis de resposta (documentam "o que retorna" no OpenAPI) ──
 
@@ -47,6 +64,13 @@ const FLOW_SCHEMA: SchemaObject = {
       description: 'erros de validação do flow.json (quando houver)',
     },
     endpoint_uri: { type: 'string' },
+    json_version: { type: 'string', example: '7.2', description: 'versão do Flow JSON' },
+    data_api_version: { type: 'string', example: '3.0', description: 'versão da Data API' },
+    health_status: {
+      type: 'object',
+      additionalProperties: true,
+      description: 'diagnóstico da Meta: o Flow pode ser enviado e o que o impede',
+    },
     preview: {
       type: 'object',
       properties: {
@@ -84,6 +108,54 @@ const SEND_RESULT_SCHEMA: SchemaObject = {
     status: { type: 'string', enum: ['sent', 'queued'] },
     ack: { type: 'string', description: 'ack inicial (entrega real confirmada por evento)' },
     fallbackUsed: { type: 'boolean', description: 'true se degradou para texto' },
+    flowToken: {
+      type: 'string',
+      description: 'token de correlação desta execução (gerado se não informado)',
+    },
+  },
+};
+
+const ENCRYPTION_SCHEMA: SchemaObject = {
+  type: 'object',
+  properties: {
+    business_public_key: { type: 'string', description: 'chave pública registrada na Meta (PEM)' },
+    business_public_key_signature_status: { type: 'string', example: 'VALID' },
+    hasPrivateKey: { type: 'boolean', description: 'o gateway guarda a privada correspondente' },
+  },
+};
+
+const ENDPOINT_SCHEMA: SchemaObject = {
+  type: 'object',
+  properties: {
+    url: { type: 'string', nullable: true, description: 'serviço do integrador' },
+    endpointUri: {
+      type: 'string',
+      nullable: true,
+      description: 'URL do gateway a registrar como endpoint_uri do Flow (requer PUBLIC_BASE_URL)',
+    },
+  },
+};
+
+const SESSION_SCHEMA: SchemaObject = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    instanceId: { type: 'string' },
+    flowToken: { type: 'string' },
+    flowId: { type: 'string', nullable: true },
+    flowName: { type: 'string', nullable: true },
+    contact: { type: 'string', nullable: true },
+    messageId: { type: 'string', nullable: true, description: 'mensagem que abriu o Flow' },
+    status: { type: 'string', enum: ['sent', 'in_progress', 'completed', 'failed'] },
+    lastScreen: { type: 'string', nullable: true },
+    lastAction: { type: 'string', nullable: true },
+    exchanges: { type: 'number' },
+    response: { type: 'object', nullable: true, additionalProperties: true },
+    responseMessageId: { type: 'string', nullable: true },
+    error: { type: 'object', nullable: true, additionalProperties: true },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' },
+    completedAt: { type: 'string', nullable: true },
   },
 };
 
@@ -113,6 +185,92 @@ export class FlowsController {
   @ApiResponse(CLOUD_ONLY_501)
   send(@Param('id') id: string, @Body() dto: SendFlowDto) {
     return this.svc.send(id, dto);
+  }
+
+  @Get('encryption')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Chave pública de criptografia registrada para o número.',
+    description:
+      'Estado da chave na Meta (`business_public_key_signature_status`) e se o gateway ' +
+      'guarda a privada correspondente. A chave privada nunca é devolvida.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiOkResponse({ schema: ENCRYPTION_SCHEMA })
+  @ApiResponse(CLOUD_ONLY_501)
+  getEncryption(@Param('id') id: string) {
+    return this.svc.getEncryption(id);
+  }
+
+  @Put('encryption')
+  @RequireScope(ApiKeyAction.SETTING)
+  @ApiOperation({
+    summary: 'Gera (ou importa) o par de chaves e registra a pública na Meta.',
+    description:
+      'Necessário para Flows com endpoint. Sem corpo: gera RSA-2048. Com `privateKey`: importa a ' +
+      'sua. Trocar a chave invalida a anterior para novas sessões de Flow.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiOkResponse({ schema: ENCRYPTION_SCHEMA })
+  @ApiResponse(CLOUD_ONLY_501)
+  setEncryption(@Param('id') id: string, @Body() dto: SetFlowEncryptionDto) {
+    return this.svc.setEncryption(id, dto);
+  }
+
+  @Get('endpoint')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Configuração do endpoint de troca de dados.',
+    description:
+      '`endpointUri` é a URL do gateway a registrar no Flow; `url` é o seu serviço, que recebe ' +
+      'o payload já decifrado e responde com a próxima tela.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiOkResponse({ schema: ENDPOINT_SCHEMA })
+  @ApiResponse(CLOUD_ONLY_501)
+  getEndpoint(@Param('id') id: string) {
+    return this.svc.getEndpoint(id);
+  }
+
+  @Put('endpoint')
+  @RequireScope(ApiKeyAction.SETTING)
+  @ApiOperation({
+    summary: 'Define o serviço do integrador para a troca de dados.',
+    description:
+      'O gateway faz POST com `{instanceId, version, action, screen, data, flowToken}` (assinado ' +
+      'com `X-WAMux-Signature` se houver webhook secret) e espera em JSON o corpo de resposta da ' +
+      'Data API. Responda HTTP 427 com `{error_msg}` para invalidar o flow_token.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiOkResponse({ schema: ENDPOINT_SCHEMA })
+  @ApiResponse(CLOUD_ONLY_501)
+  setEndpoint(@Param('id') id: string, @Body() dto: SetFlowEndpointDto) {
+    return this.svc.setEndpoint(id, dto.url);
+  }
+
+  @Get('sessions')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Execuções de Flow (correlação por flowToken).',
+    description: 'Lista as sessões mais recentes; pagine com `before` (createdAt do último item).',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiOkResponse({ schema: { type: 'array', items: SESSION_SCHEMA } })
+  listSessions(@Param('id') id: string, @Query() q: ListFlowSessionsQueryDto) {
+    return this.svc.listSessions(id, q);
+  }
+
+  @Get('sessions/:flowToken')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Uma execução de Flow pelo flowToken.',
+    description: 'Estado, contato, mensagem enviada e resposta final (quando concluída).',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiParam({ name: 'flowToken', description: 'Token de correlação da execução.' })
+  @ApiOkResponse({ schema: SESSION_SCHEMA })
+  getSession(@Param('id') id: string, @Param('flowToken') flowToken: string) {
+    return this.svc.getSession(id, flowToken);
   }
 
   @Get()
@@ -159,6 +317,69 @@ export class FlowsController {
   @ApiResponse(CLOUD_ONLY_501)
   get(@Param('id') id: string, @Param('flowId') flowId: string) {
     return this.svc.get(id, flowId);
+  }
+
+  @Patch(':flowId')
+  @RequireScope(ApiKeyAction.SETTING)
+  @ApiOperation({
+    summary: 'Atualiza metadados do Flow (nome, categorias, endpoint_uri, app).',
+    description: 'Só em DRAFT. Para alterar um Flow publicado, clone-o (`clone_flow_id`).',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiParam({ name: 'flowId', description: 'ID do Flow.' })
+  @ApiOkResponse({ schema: OK_SCHEMA })
+  @ApiResponse(CLOUD_ONLY_501)
+  async updateMetadata(
+    @Param('id') id: string,
+    @Param('flowId') flowId: string,
+    @Body() dto: UpdateFlowMetadataDto,
+  ) {
+    await this.svc.updateMetadata(id, flowId, dto);
+    return { ok: true };
+  }
+
+  @Get(':flowId/assets')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Assets do Flow (Flow JSON vigente, com URL temporária de download).',
+    description: 'Repassa a lista de assets da Graph API.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiParam({ name: 'flowId', description: 'ID do Flow.' })
+  @ApiOkResponse({
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', example: 'flow.json' },
+          asset_type: { type: 'string', example: 'FLOW_JSON' },
+          download_url: { type: 'string' },
+        },
+      },
+    },
+  })
+  @ApiResponse(CLOUD_ONLY_501)
+  assets(@Param('id') id: string, @Param('flowId') flowId: string) {
+    return this.svc.assets(id, flowId);
+  }
+
+  @Get(':flowId/json')
+  @RequireScope(ApiKeyAction.READ)
+  @ApiOperation({
+    summary: 'Conteúdo do Flow JSON vigente.',
+    description:
+      'O gateway baixa o asset na Meta e devolve o texto — evita depender da URL temporária do ' +
+      'CDN (e de CORS) no cliente. `flowJson: null` quando o Flow ainda não tem JSON.',
+  })
+  @ApiParam(ID_PARAM)
+  @ApiParam({ name: 'flowId', description: 'ID do Flow.' })
+  @ApiOkResponse({
+    schema: { type: 'object', properties: { flowJson: { type: 'string', nullable: true } } },
+  })
+  @ApiResponse(CLOUD_ONLY_501)
+  json(@Param('id') id: string, @Param('flowId') flowId: string) {
+    return this.svc.json(id, flowId);
   }
 
   @Post(':flowId/assets')
@@ -212,26 +433,19 @@ export class FlowsController {
   @Get(':flowId/metrics')
   @RequireScope(ApiKeyAction.READ)
   @ApiOperation({
-    summary: 'Métricas de um Flow.',
-    description: 'Repassa a resposta de métricas da Graph API (Meta) sem normalizar.',
+    summary: 'Métricas de um Flow (descontinuado pela Meta).',
+    deprecated: true,
+    description:
+      'A Flows Metrics API foi descontinuada pela Meta em 2026-04-30. Responde 410 — acompanhe ' +
+      'a saúde pelo evento `flow.status_update` e por `health_status` em GET :flowId.',
   })
   @ApiParam(ID_PARAM)
   @ApiParam({ name: 'flowId', description: 'ID do Flow.' })
-  @ApiOkResponse({
-    description: 'Payload de métricas tal como a Graph API (Meta) devolve.',
-    schema: {
-      type: 'object',
-      additionalProperties: true,
-      description: 'Resposta bruta de metric.name(...) (Graph API) — shape não normalizado.',
-    },
-  })
-  @ApiResponse(CLOUD_ONLY_501)
-  metrics(
-    @Param('id') id: string,
-    @Param('flowId') flowId: string,
-    @Query() q: FlowMetricsQueryDto,
-  ) {
-    return this.svc.metrics(id, flowId, q);
+  @ApiResponse({ status: 410, description: 'Recurso descontinuado pela Meta.' })
+  metrics(): never {
+    throw new GoneException(
+      'A Flows Metrics API foi descontinuada pela Meta em 2026-04-30. Use o evento flow.status_update e o campo health_status do Flow.',
+    );
   }
 
   @Delete(':flowId')
